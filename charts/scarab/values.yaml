@@ -1,0 +1,29 @@
+# scarab — the tenant/agent side of the platform.
+#
+# This chart installs no workload. The broker and the root agent are created
+# per-workspace by pestilence, from the images this repository publishes. What the
+# chart owns is the namespace they run in and the admission policies that bound
+# every tenant pod.
+#
+# The namespace must exist BEFORE the first workspace is provisioned, which is why
+# it is a chart rather than something pestilence creates at runtime.
+
+nameOverride: ""
+
+namespace:
+  create: true
+  name: scarab
+
+networkPolicy:
+  enabled: true
+  # The broker's serving port. The workspace label on the caller's namespace is set
+  # by pestilence and cannot be added by a tenant.
+  brokerPort: 8443
+
+# Platform-specific pod invariants that Pod Security Admission cannot express:
+# serviceAccountName, automountServiceAccountToken, nodeName, runtimeClassName, and
+# the volume allowlist. They apply to everything creating pods in a tenant
+# namespace, INCLUDING the broker, so the invariants hold even if the broker is
+# compromised.
+admissionPolicies:
+  enabled: true

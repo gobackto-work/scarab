@@ -16,8 +16,8 @@
 #   * EXIT-CODE DRIVEN, with a quotable summary line.
 #
 # Usage:
-#   hack/verify.sh            # the gate
-#   hack/verify.sh --deep     # adds the slow checks (mutation testing)
+#   scripts/verify.sh            # the gate
+#   scripts/verify.sh --deep     # adds the slow checks (mutation testing)
 #
 # Tools and the versions this was derived with:
 #
@@ -96,6 +96,7 @@ require govulncheck "$(govulncheck -version 2>&1 | head -1)" "go1.27" || true
 require shellcheck "$(shellcheck --version 2>&1 | sed -n 's/^version: //p')" "0.11.0" || true
 require hadolint "$(hadolint --version 2>&1)" "2.15.1" || true
 require gitleaks "$(gitleaks version 2>&1)" "8.30.1" || true
+require helm "$(helm version --short 2>&1)" "v4" || true
 
 step "go: format, vet, lint, dead code"
 check_quiet "gofmt" gofmt -l .
@@ -120,8 +121,12 @@ check "eslint (complexity, sonarjs)" npx --no-install eslint .
 check "knip (unused files, exports, deps)" npx --no-install knip --reporter compact
 check "jscpd (duplication, all languages)" npx --no-install jscpd --config .jscpd.json .
 
+step "chart"
+check "helm lint" helm lint charts/scarab
+check "helm template" helm template scarab charts/scarab
+
 step "shell, dockerfile, secrets"
-check "shellcheck (entrypoint + hack scripts)" shellcheck -s bash image/agent/scarab-agent hack/*.sh
+check "shellcheck (entrypoint + scripts)" shellcheck -s bash image/agent/scarab-agent scripts/*.sh cluster-setup-scripts/*.sh
 check "hadolint (Dockerfiles)" hadolint image/agent/Dockerfile image/broker/Dockerfile
 check "gitleaks (tree + git history)" gitleaks detect --source . --no-banner --redact
 

@@ -1192,7 +1192,7 @@ for the platform until pestilence flips the flag.
 Two images: `scarab-broker` (a static Go binary) and `scarab-agent` (Node + Pi +
 bridge). They share almost nothing and the broker should be as small as possible.
 
-**[D]** Both images exist and load locally. `hack/load-image.sh` cross-compiles
+**[D]** Both images exist and load locally. `cluster-setup-scripts/load-image.sh` cross-compiles
 the binaries, builds both images with buildah, and imports them into the node's
 containerd:
 

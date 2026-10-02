@@ -8,7 +8,7 @@
 #   3. Pi actually loads the extension (a syntax error or a bad import would
 #      otherwise only surface when an agent starts).
 #
-# Usage: wsl.exe -e bash /mnt/c/.../hack/smoke-image.sh
+# Usage: wsl.exe -e bash /mnt/c/.../scripts/smoke-image.sh
 set -euo pipefail
 
 IMAGE="${IMAGE:-scarab-agent:dev}"

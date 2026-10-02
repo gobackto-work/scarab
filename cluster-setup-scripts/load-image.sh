@@ -25,9 +25,9 @@
 #                                   /usr/local/bin/k0s ctr images rm *
 #
 # Usage
-#   hack/load-image.sh                 # build + load both images
-#   TAG=v2 hack/load-image.sh
-#   SKIP_BUILD=1 hack/load-image.sh    # reuse existing archives
+#   cluster-setup-scripts/load-image.sh                 # build + load both images
+#   TAG=v2 cluster-setup-scripts/load-image.sh
+#   SKIP_BUILD=1 cluster-setup-scripts/load-image.sh    # reuse existing archives
 
 set -euo pipefail
 

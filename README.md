@@ -19,7 +19,15 @@ Workspaces are isolated from one another. Agents request actions such as startin
 ## Development
 
 ```sh
-bash hack/verify.sh
+bash scripts/verify.sh
 ```
+
+## Deploying
+
+```sh
+helm install scarab oci://ghcr.io/gobackto-work/charts/scarab --version 1.0.0
+```
+
+The chart installs the broker namespace and the admission policies that bound every tenant pod. It installs no workload: pestilence creates each workspace's broker and root agent from the published images. Install it before [pestilence](https://github.com/gobackto-work/pestilence), which binds a Role in this namespace.
 
 See [Architecture](docs/architecture.md) for the interface between scarab and pestilence, and [Verification](docs/verification.md) for the checks run by the development gate.
