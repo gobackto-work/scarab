@@ -8,7 +8,8 @@
 # image must run as a non-root user and need no capabilities. The PodSpec sets
 # the RuntimeDefault seccomp profile and drops ALL capabilities.
 
-FROM gcr.io/distroless/static-debian12:nonroot
+# Digest-pinned: a tag can be moved, a digest cannot. Shared with pestilence's image.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 # Cross-compiled by hack/load-image.sh into this build context.
 COPY scarab-broker /scarab-broker

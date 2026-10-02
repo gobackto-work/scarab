@@ -8,7 +8,9 @@
 # image must run as a non-root user and need no capabilities. The node image
 # already provides a non-root `node` user at uid 1000.
 
-FROM docker.io/library/node:24-bookworm-slim
+# Digest-pinned. `node:24-bookworm-slim` and `node:24-slim` are the same image, so this
+# digest is shared with town's image. A tag can be moved; a digest cannot.
+FROM docker.io/library/node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
 
 # Pin Pi. The agent's behaviour is part of the platform contract, not a floating
 # dependency: a Pi upgrade changes what the agent does.
