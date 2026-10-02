@@ -12,7 +12,7 @@ FROM docker.io/library/node:24-bookworm-slim
 
 # Pin Pi. The agent's behaviour is part of the platform contract, not a floating
 # dependency: a Pi upgrade changes what the agent does.
-ARG PI_VERSION=0.87.1
+ARG PI_VERSION=1.0.0
 
 # PI_OFFLINE keeps the install from making a version-check request.
 RUN PI_OFFLINE=1 npm install --global --omit=dev \
