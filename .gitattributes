@@ -1,0 +1,9 @@
+# Keep LF in files whose line endings are functionally significant on Linux.
+#
+# The container entrypoint's shebang must be LF, and hack/load-image.sh strips
+# CR from it before every build. With core.autocrlf=true that normalisation
+# would otherwise leave the working tree dirty after each build.
+
+*.sh text eol=lf
+Dockerfile text eol=lf
+image/agent/scarab-agent text eol=lf

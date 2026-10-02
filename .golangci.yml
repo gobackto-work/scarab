@@ -1,0 +1,96 @@
+# Lint configuration for both agents and (eventually) CI.
+#
+# The gate is `hack/verify.sh`. Thresholds here are HARD LIMITS, not advice: for
+# an agent a complexity limit is a forcing function -- it makes the code get
+# restructured rather than annotated -- which is why they are set low enough to
+# bite and the failures are not suppressed.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    # Complexity. These are the ones that force restructuring: cognitive
+    # complexity counts nesting and control-flow breaks, which is what actually
+    # makes code hard to change. `gocyclo` is here mostly for continuity.
+    - gocognit
+    - gocyclo
+    - funlen
+    - nestif
+    - maintidx
+    # Duplication WITHIN this module. Cross-repo duplication (the contract
+    # constants, the agent defaults) is invisible here -- that needs jscpd across
+    # all three repos, which the verify script runs.
+    - dupl
+    # Style and correctness beyond the standard set.
+    - revive
+    - gocritic
+    - misspell
+    - unparam
+    # Security. Expect false positives; see the exclusions below, each of which
+    # is justified rather than blanket-disabled.
+    - gosec
+
+  settings:
+    gocognit:
+      # Lower than the common 30. A function that nests this deep is the shape
+      # that produced the pod-budget and mount-path bugs.
+      min-complexity: 20
+    gocyclo:
+      min-complexity: 15
+    funlen:
+      lines: 60
+      statements: 45
+    nestif:
+      min-complexity: 5
+    maintidx:
+      # Maintainability index; below this is "hard to maintain" territory.
+      under: 20
+    dupl:
+      threshold: 150
+
+  exclusions:
+    rules:
+      # Tests may ignore close/write errors, write fixtures with ordinary
+      # permissions, and assert many properties in one function. None of that
+      # says anything about the code under test, and suppressing it in tests is
+      # what keeps the thresholds low enough to bite in production code.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - funlen
+          - dupl
+          - gocognit
+          - gocyclo
+          - gosec
+
+      # In a test helper, `*testing.T` before `context.Context` is idiomatic; the
+      # rule is about production code.
+      - path: _test\.go
+        linters:
+          - revive
+        text: "context-as-argument"
+
+      # gosec false positives, each specific to this repository's subject matter.
+      # Verified by reading every hit; none is a real finding.
+      - linters:
+          - gosec
+        text: "G101"
+        # "Potential hardcoded credentials" fires on the *names* of things:
+        # the path "/var/run/scarab/token" and env vars like
+        # SCARAB_TOKEN_PUBLIC_KEY. It cannot tell a token from the word "token".
+      - linters:
+          - gosec
+        text: "G204"
+        # "Subprocess launched with a potential tainted input" fires on
+        # exec.CommandContext(pi). Exec'ing Pi is the bridge's entire purpose,
+        # and the arguments come from the broker's templates, not the tenant.
+      - linters:
+          - gosec
+        text: "G304|G703"
+        # "File inclusion / path traversal via variable" fires on reading the
+        # agent directory, which comes from the pod's own environment, not from
+        # a request.
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

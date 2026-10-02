@@ -1,0 +1,11 @@
+{
+  "name": "@gobackto-work/scarab-platform-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The root agent's only path to the platform: spawn and manage worker agents through the broker.",
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

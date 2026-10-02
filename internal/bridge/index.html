@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scarab workspace</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: #111; color: #ddd; display: flex; flex-direction: column; height: 100vh; }
+  header { padding: .5rem 1rem; border-bottom: 1px solid #333; color: #888; }
+  header b { color: #ddd; }
+  #modelkey { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;
+          padding: .75rem 1rem; border-bottom: 1px solid #333; background: #161616; }
+  #modelkey label { color: #888; display: flex; gap: .35rem; align-items: center; }
+  #modelkey select, #modelkey input { background: #1b1b1b; color: #ddd; border: 1px solid #444;
+          border-radius: 4px; padding: .35rem .5rem; font: inherit; }
+  #modelkey .hint { color: #666; flex-basis: 100%; }
+  /* A datalist renders nothing until you focus and type, which reads as broken.
+     These are visible, clickable, and still allow an id that is not listed. */
+  #providers { display: flex; flex-wrap: wrap; gap: .25rem; flex-basis: 100%;
+          max-height: 7rem; overflow-y: auto; }
+  #providers button { background: #1e1e1e; color: #aaa; border: 1px solid #3a3a3a;
+          border-radius: 999px; padding: .1rem .55rem; font: inherit; font-size: 12px; }
+  #providers button[aria-pressed="true"] { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
+  #log { flex: 1; overflow-y: auto; margin: 0; padding: 1rem; white-space: pre-wrap; word-wrap: break-word; }
+  form { display: flex; gap: .5rem; padding: .75rem 1rem; border-top: 1px solid #333; }
+  input { flex: 1; background: #1b1b1b; color: #ddd; border: 1px solid #444; border-radius: 4px;
+          padding: .5rem .75rem; font: inherit; }
+  button { background: #2b6cb0; color: #fff; border: 0; border-radius: 4px; padding: .5rem 1rem; font: inherit; }
+  button:disabled { background: #333; color: #777; }
+  #stop:not(:disabled) { background: #a33; }
+  .tool { color: #7aa2f7; }
+  .toolresult { color: #6a9955; }
+  .think { color: #777; font-style: italic; }
+  .user { color: #9ece6a; }
+  .err  { color: #f7768e; }
+  .meta { color: #666; }
+</style>
+</head>
+<body>
+<header>scarab workspace &mdash; <b id="status">connecting…</b></header>
+
+<section id="modelkey">
+  <label>model provider
+    <input id="provider" size="18" placeholder="provider id">
+  </label>
+  <label>api key <input id="apikey" type="password" size="34" autocomplete="off"
+      placeholder="leave blank to keep the stored key"></label>
+  <label>model <input id="model" size="26" list="models" placeholder="start typing, or pick a provider"></label>
+  <datalist id="models"></datalist>
+  <button id="savecred" type="button">save for this workspace</button>
+  <span id="credhint" class="hint">Saved to Pi's credential store on the workspace
+    volume, so it survives a pod restart and is shared with this workspace's workers.</span>
+  <div id="providers" role="listbox" aria-label="known providers"></div>
+</section>
+
+<pre id="log"></pre>
+<form id="compose" autocomplete="off">
+  <input id="message" placeholder="ask the root agent…" autofocus>
+  <button type="submit">send</button>
+  <button id="stop" type="button" disabled>stop</button>
+</form>
+
+<script type="module">
+import { catalog, isRealModel, providerOptions, renderHistory, renderRecord } from "/app.mjs";
+
+const log = document.getElementById('log');
+const status = document.getElementById('status');
+const form = document.getElementById('compose');
+const input = document.getElementById('message');
+const modelkey = document.getElementById('modelkey');
+const credhint = document.getElementById('credhint');
+const provider = document.getElementById('provider');
+const providers = document.getElementById('providers');
+const apikey = document.getElementById('apikey');
+const model = document.getElementById('model');
+const models = document.getElementById('models');
+const stop = document.getElementById('stop');
+
+// The catalog Pi reports, so the provider list is data-driven rather than a
+// hardcoded subset that omitted every token-auth provider.
+let catalogModels = {};
+
+// Offer the full provider list immediately, then narrow it to what Pi reports as
+// configured once the catalog arrives.
+fillProviders([]);
+
+// A long tool call (an npm install, say) blocks the agent, and Pi accepts one
+// message at a time. Without a stop control the only way out was to wait, and a
+// prompt typed meanwhile was silently queued.
+let busy = false;
+function setBusy(next) {
+  busy = next;
+  stop.disabled = !busy;
+}
+
+const write = (text, cls) => {
+  const span = document.createElement('span');
+  if (cls) span.className = cls;
+  span.textContent = text;
+  log.appendChild(span);
+  log.scrollTop = log.scrollHeight;
+};
+
+const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+let ws;
+
+function connect() {
+  ws = new WebSocket(proto + location.host + '/ws');
+  ws.onopen = () => { status.textContent = 'connected'; };
+  ws.onclose = () => { status.textContent = 'disconnected — retrying'; setTimeout(connect, 2000); };
+  ws.onerror = () => { status.textContent = 'connection error'; };
+  ws.onmessage = (event) => render(JSON.parse(event.data));
+}
+
+function render(record) {
+  // The greeting carries connection state, not transcript text.
+  if (record.type === 'bridge') {
+    status.textContent = record.pi ? 'agent running' : 'agent starting…';
+    if (record.model) model.value = record.model;
+    const configured = record.providers || [];
+    credhint.textContent = configured.length
+      ? 'stored: ' + configured.join(', ') + (record.model ? ' · ' + record.model : ' · Pi default model') +
+        ' — change the model below if the agent reports a quota or model error.'
+      : "Saved to Pi's credential store on the workspace volume, so it survives a restart and is shared with this workspace's workers.";
+    return;
+  }
+
+  // Run state drives the stop control.
+  if (record.type === 'agent_start') setBusy(true);
+  if (record.type === 'agent_settled') setBusy(false);
+
+  // Responses to the state requests the bridge makes on connect.
+  if (record.type === 'response') {
+    handleResponse(record);
+    return;
+  }
+
+  const out = renderRecord(record);
+  if (out) write(out.text, out.cls);
+}
+
+function handleResponse(record) {
+  const data = record.data || {};
+
+  if (record.command === 'get_messages' && record.success) {
+    // Replay, replacing whatever is shown: a reloaded page should look like the
+    // conversation, and re-rendering must be idempotent because every client gets
+    // the response.
+    log.replaceChildren();
+    for (const item of renderHistory(data.messages)) write(item.text, item.cls);
+    return;
+  }
+
+  if (record.command === 'get_available_models' && record.success) {
+    const grouped = catalog(data.models);
+    catalogModels = grouped.modelsByProvider;
+    fillProviders(grouped.providers);
+    fillModels();
+    return;
+  }
+
+  if (record.command === 'get_state' && record.success && isRealModel(data.model)) {
+    // Prefill from what Pi is actually running. Guarded, because get_state reports
+    // a placeholder with provider and id "unknown" when nothing is selected --
+    // writing that in made the provider field read "unknown" and no chip match it,
+    // which looks exactly like an empty list.
+    provider.value = data.model.provider;
+    model.value = data.model.id;
+    fillModels();
+  }
+}
+
+// fillProviders renders the known providers as visible chips. A datalist was the
+// wrong control: it shows nothing until the input is focused and typed into, so a
+// populated list looks like an empty one. The input still accepts an id that is
+// not listed, because the bridge accepts any provider Pi knows.
+function fillProviders(configured) {
+  const names = providerOptions(configured);
+  providers.replaceChildren(
+    ...names.map((name) => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.textContent = name;
+      chip.addEventListener('click', () => {
+        provider.value = name;
+        markSelectedProvider();
+        fillModels();
+      });
+      return chip;
+    }),
+  );
+  markSelectedProvider();
+}
+
+// markSelectedProvider highlights the chip matching the input, so a configured or
+// typed provider is visible in the list rather than only in the field.
+function markSelectedProvider() {
+  for (const chip of providers.children) {
+    chip.setAttribute('aria-pressed', String(chip.textContent === provider.value));
+  }
+}
+
+// fillModels narrows the model suggestions to the selected provider.
+//
+// This stays a datalist on purpose: a provider can have hundreds of models, so
+// type-ahead is the right control. The placeholder says how many there are, because
+// otherwise a populated list is indistinguishable from an empty one -- which is the
+// mistake the provider control made.
+function fillModels() {
+  const ids = catalogModels[provider.value] || [];
+  models.replaceChildren(
+    ...ids.map((id) => {
+      const option = document.createElement('option');
+      option.value = id;
+      return option;
+    }),
+  );
+  model.placeholder = ids.length ? `${ids.length} known — start typing` : 'model id';
+}
+
+document.getElementById('savecred').addEventListener('click', () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({
+    type: 'model_key',
+    provider: provider.value,
+    apiKey: apikey.value.trim(),
+    model: model.value.trim(),
+  }));
+  apikey.value = '';
+});
+
+form.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const text = input.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  input.value = '';
+  if (busy) write('\n[queued — the agent is still working; press stop to interrupt]\n', 'meta');
+  ws.send(JSON.stringify({ type: 'prompt', message: text }));
+});
+
+stop.addEventListener('click', () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  write('\n[stopping…]\n', 'meta');
+  ws.send(JSON.stringify({ type: 'abort' }));
+});
+
+provider.addEventListener('change', fillModels);
+provider.addEventListener('input', () => {
+  markSelectedProvider();
+  fillModels();
+});
+
+connect();
+</script>
+</body>
+</html>

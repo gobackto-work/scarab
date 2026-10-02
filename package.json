@@ -1,0 +1,19 @@
+{
+  "name": "scarab-tooling",
+  "private": true,
+  "description": "Development-only tooling for the JavaScript in this repository (the bridge UI and the Pi extension). Nothing here is a runtime dependency.",
+  "type": "module",
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.11.0",
+    "eslint-plugin-sonarjs": "4.2.1",
+    "jscpd": "5.3.2",
+    "knip": "6.38.0"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "knip": "knip",
+    "dupes": "jscpd --config .jscpd.json .",
+    "test": "node --test internal/bridge/app.test.mjs image/agent/platform-tools/broker.test.js"
+  }
+}

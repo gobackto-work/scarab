@@ -1,0 +1,28 @@
+#!/bin/bash
+# Worker entrypoint for the scarab-agent image.
+#
+# It creates the worker's result directory, captures Pi's final answer into
+# result.md, and execs Pi with the arguments the broker supplied.
+#
+# The capture is the point: the platform tells the root agent that a worker writes
+# `<resultRoot>/<agentId>/result.md`, so it must actually happen. Leaving it to the
+# model means a worker can complete successfully and hand back nothing, which is
+# exactly what happened in a live workspace.
+#
+# The broker cannot create this file itself: it runs in the scarab namespace and
+# does not mount the workspace volume (scarab/docs/handoff.md §5.9).
+#
+# "$@" is passed through untouched, so a task beginning with "-" cannot be read as
+# a flag, and the task is never interpolated into a shell.
+set -euo pipefail
+
+if [ -n "${SCARAB_RESULT_PATH:-}" ]; then
+	mkdir -p "$(dirname "${SCARAB_RESULT_PATH}")"
+	# Tee rather than redirect: the answer lands in the result file AND keeps
+	# streaming to the pod log, which is what agents_logs reads while the worker is
+	# still running. Process substitution keeps `exec` below, so Pi still receives
+	# signals directly instead of being a child of a shell.
+	exec > >(tee "${SCARAB_RESULT_PATH}")
+fi
+
+exec pi "$@"

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "image/agent/platform-tools/index.js",
+    "image/agent/platform-tools/broker.test.js",
+    "internal/bridge/app.mjs",
+    "internal/bridge/app.test.mjs"
+  ],
+  "project": [
+    "image/agent/platform-tools/*.js",
+    "internal/bridge/*.mjs"
+  ],
+  "ignoreDependencies": [
+    "@earendil-works/pi-ai",
+    "@earendil-works/pi-coding-agent"
+  ]
+}
