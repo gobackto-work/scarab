@@ -34,7 +34,7 @@ jobs:
             output: image/broker/scarab-broker
             package: broker
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v5
         with:
