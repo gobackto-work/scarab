@@ -18,11 +18,10 @@ GOLANGCI_VERSION=v2.14.0
 GITLEAKS_VERSION=8.30.1
 SHELLCHECK_VERSION=0.11.0
 HADOLINT_VERSION=2.15.1
-HELM_VERSION=4.3.0
 
 case "$(uname -m)" in
-x86_64 | amd64) arch_gh=x86_64; arch_go=amd64; arch_gitleaks=x64 ;;
-aarch64 | arm64) arch_gh=aarch64; arch_go=arm64; arch_gitleaks=arm64 ;;
+x86_64 | amd64) arch_gh=x86_64; arch_gitleaks=x64 ;;
+aarch64 | arm64) arch_gh=aarch64; arch_gitleaks=arm64 ;;
 *)
 	echo "unsupported architecture: $(uname -m)" >&2
 	exit 1
@@ -58,12 +57,9 @@ curl -fsSL -o "$DEST/hadolint" \
 	"https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-${arch_gh}"
 chmod 0755 "$DEST/hadolint"
 
-echo "==> helm $HELM_VERSION"
-curl -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-${arch_go}.tar.gz" | tar -xz -C "$tmp"
-install "$tmp/linux-${arch_go}/helm" "$DEST/helm"
 
 echo
 echo "installed into $DEST:"
-for tool in staticcheck deadcode govulncheck golangci-lint gitleaks shellcheck hadolint helm; do
+for tool in staticcheck deadcode govulncheck golangci-lint gitleaks shellcheck hadolint; do
 	printf '  %-16s %s\n' "$tool" "$("$DEST/$tool" --version 2>&1 | head -1)"
 done

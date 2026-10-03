@@ -11,8 +11,8 @@ bash scripts/verify.sh --deep   # adds the slow checks (mutation testing)
 It prints a per-check result and ends with a quotable line:
 
 ```
-verify.sh: 16 passed, 0 failed
-verified: 16 checks, 0 failures
+verify.sh: 15 passed, 0 failed
+verified: 15 checks, 0 failures
 ```
 
 ## The four design rules
@@ -64,7 +64,6 @@ structural rather than a bug awaiting a fix. From its own issue tracker:
 | `knip` | 6.38.0 | unused files, exports, dependencies | `npm ci` |
 | `jscpd` | 5.3.2 | **duplication across every language**, which is the class no single-language tool sees | `npm ci` |
 | `shellcheck` | 0.11.0 | the container entrypoint, `scripts/*.sh` and `cluster-setup-scripts/*.sh` | release zip from `koalaman/shellcheck` |
-| `helm lint`, `helm template` | v4 | a chart that does not render | release tarball |
 | `hadolint` | 2.15.1 | the Dockerfiles | release exe from `hadolint/hadolint` |
 | `gitleaks` | 8.30.1 | secrets in the tree **and in git history** | release zip from `gitleaks/gitleaks` |
 
