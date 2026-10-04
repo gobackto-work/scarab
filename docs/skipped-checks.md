@@ -10,15 +10,11 @@ Read this file before you review a change.
 
 ## Open skips
 
-### `deadcode` over `internal/report`
+None. The gate checks everything it says it checks.
 
-| | |
-|---|---|
-| Check | `deadcode (unreachable functions)` |
-| Skipped for | `internal/report` |
-| Why | `deadcode` roots its analysis at `main`. Nothing calls this package from `main` yet, because the broker's reporting is the next change. Every function in the package is exercised by its tests meanwhile. |
-| Removed by | wiring the package into `cmd/broker`, in the same change that adds the broker's reporting |
-| Risk while open | a function reachable only from a test, inside this package, is not reported as dead code |
+`internal/report` was skipped here between the change that added it and the change that
+wired the broker up, because `deadcode` roots its analysis at `main` and nothing called it
+from there. The entry is gone with the wiring.
 
 **At review time, run the check over the whole module.** This reports nothing when the
 package is healthy, and it does not skip anything:

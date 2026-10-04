@@ -25,6 +25,7 @@ import (
 	"github.com/gobackto-work/scarab/internal/agentpod"
 	"github.com/gobackto-work/scarab/internal/broker"
 	"github.com/gobackto-work/scarab/internal/contract"
+	"github.com/gobackto-work/scarab/internal/report"
 )
 
 func main() {
@@ -57,7 +58,8 @@ func run() error {
 	}
 
 	spawner := broker.NewKubeSpawner(client, settings.agentpodConfig(), settings.podBudget, settings.memoryBudget)
-	handler := broker.NewServer(spawner, verifier, logger).Handler()
+	recorder := runStateReporter(settings, logger)
+	handler := broker.NewServer(spawner, verifier, recorder, logger).Handler()
 
 	srv, err := newServer(handler, settings, logger)
 	if err != nil {
@@ -74,6 +76,7 @@ func run() error {
 			errCh <- err
 		}
 	}()
+	go observeRuns(ctx, spawner, recorder, logger)
 
 	select {
 	case err := <-errCh:
@@ -83,6 +86,58 @@ func run() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
+	}
+}
+
+// reportInterval is how often the broker looks for workers that have reached a terminal
+// state.
+//
+// A poll and not a watch, because the states it needs are already on the objects List
+// returns, and because a poll is self-healing: a report lost to a control-plane restart is
+// sent again on the next pass, with the same event id, so it cannot become two events.
+const reportInterval = 30 * time.Second
+
+// runStateReporter builds the broker's reporter, or a discarding one when the control plane
+// is not configured.
+//
+// A failure here does not stop the broker. Losing notifications is bad; refusing to run
+// work because notifications cannot be sent is worse, and it is the failure mode that would
+// look like the platform being down.
+func runStateReporter(settings settings, logger *slog.Logger) broker.Recorder {
+	if settings.platformURL == "" || settings.reportTokenPath == "" {
+		logger.Warn("run state reporting is off: SCARAB_PLATFORM_URL or SCARAB_REPORT_TOKEN_PATH is unset")
+		return nil
+	}
+	client, err := report.New(settings.platformURL, settings.reportTokenPath)
+	if err != nil {
+		logger.Error("run state reporting is off", "err", err)
+		return nil
+	}
+	return broker.NewReporter(client, logger)
+}
+
+// observeRuns reports the state of every worker that has reached a terminal state.
+func observeRuns(ctx context.Context, spawner broker.Spawner, recorder broker.Recorder, logger *slog.Logger) {
+	reporter, ok := recorder.(*broker.Reporter)
+	if !ok {
+		return
+	}
+	ticker := time.NewTicker(reportInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			agents, err := spawner.List(ctx)
+			if err != nil {
+				// The API server is unreachable or the Role is wrong. Both are transient
+				// from here, and the next pass tries again.
+				logger.Warn("could not list workers to report their state", "err", err)
+				continue
+			}
+			reporter.Observe(ctx, agents)
+		}
 	}
 }
 
@@ -139,6 +194,12 @@ type settings struct {
 	tokenPublicKeyPath string
 	tokenAudience      string
 
+	// Reporting. Both are empty when the workspace was provisioned without a control
+	// plane address, and the broker then reports nothing rather than failing to start:
+	// reporting is a side effect of running work, not a precondition for it.
+	platformURL     string
+	reportTokenPath string
+
 	// Broker TLS paths, empty when pestilence provisioned the workspace without
 	// TLS (handoff §8.5).
 	tlsCertPath string
@@ -154,6 +215,8 @@ func loadSettings() (settings, error) {
 	s.agentImage = os.Getenv(contract.EnvAgentImage)
 	s.tokenPublicKeyPath = os.Getenv(contract.EnvTokenPublicKey)
 	s.tokenAudience = os.Getenv(contract.EnvTokenAudience)
+	s.platformURL = os.Getenv(contract.EnvPlatformURL)
+	s.reportTokenPath = os.Getenv(contract.EnvReportTokenPath)
 	s.tlsCertPath = os.Getenv(contract.EnvBrokerTLSCert)
 	s.tlsKeyPath = os.Getenv(contract.EnvBrokerTLSKey)
 
