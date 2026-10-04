@@ -82,37 +82,74 @@ func TestStoppedRecordsACancelledRun(t *testing.T) {
 	}
 }
 
-// The poll reports every worker that has a state worth recording, and skips the ones that
-// do not.
-func TestObserveReportsEveryWorkerWithAState(t *testing.T) {
+// Every worker's START is reported, whatever its phase, so that a run which begins and ends
+// between two polls still records both events.
+func TestObserveReportsTheStartBeforeTheEnd(t *testing.T) {
 	cp := newControlPlane(t)
 	reporter := reporterFor(t, cp)
 
 	reporter.Observe(context.Background(), []Agent{
 		{ID: "a", State: StatePending},
-		{ID: "b", State: StateRunning},
-		{ID: "c", State: StateSucceeded},
-		{ID: "d", State: StateFailed},
-		{ID: "e", State: "something-new"},
+		{ID: "b", State: StateSucceeded},
+		{ID: "c", State: StateFailed},
+		{ID: "d", State: "something-new"},
 	})
 
-	// Three, from four states: pending is not a run state and an unknown one is not ours to
-	// interpret.
-	if len(cp.posts) != 3 {
-		t.Fatalf("the control plane saw %d posts, want 3: %+v", len(cp.posts), cp.posts)
+	if len(cp.posts) != 6 {
+		t.Fatalf("the control plane saw %d posts, want 6: %+v", len(cp.posts), cp.posts)
 	}
-	want := map[string]string{"b": contract.StateRunning, "c": contract.StateSucceeded, "d": contract.StateFailed}
-	for _, p := range cp.posts {
-		runID, _ := p["run_id"].(string)
-		if want[runID] != p["state"] {
-			t.Errorf("run %s was reported as %v, want %q", runID, p["state"], want[runID])
+
+	// Every run has a start, whatever the job's phase.
+	starts := map[string]int{}
+	for i, post := range cp.posts {
+		if post["state"] == contract.StateRunning {
+			starts[post["run_id"].(string)] = i
 		}
+	}
+	for _, run := range []string{"a", "b", "c", "d"} {
+		if _, ok := starts[run]; !ok {
+			t.Errorf("run %s has no start, so its end would be refused", run)
+		}
+	}
+
+	// And each end follows its own start. That is the order the record needs; the order
+	// BETWEEN runs is not something it cares about.
+	ends := 0
+	for i, post := range cp.posts {
+		switch post["state"] {
+		case contract.StateSucceeded, contract.StateFailed:
+			ends++
+			if starts[post["run_id"].(string)] > i {
+				t.Errorf("run %v ended before it started", post["run_id"])
+			}
+		}
+	}
+	if ends != 2 {
+		t.Errorf("got %d ends, want 2", ends)
+	}
+}
+
+// The case this exists for. A worker began and ended inside one poll interval, so its running
+// phase was never observed -- and a terminal state on its own is refused, because a run
+// cannot end without having begun. The poll therefore asserts the start it knows happened.
+func TestAWorkerThatEndedBeforeThePollStillRecordsBothEvents(t *testing.T) {
+	cp := newControlPlane(t)
+	reporterFor(t, cp).Observe(context.Background(), []Agent{{ID: "a", State: StateFailed}})
+
+	if len(cp.posts) != 2 {
+		t.Fatalf("the control plane saw %d posts, want a start and an end", len(cp.posts))
+	}
+	if cp.posts[0]["state"] != contract.StateRunning || cp.posts[1]["state"] != contract.StateFailed {
+		t.Errorf("posts = %v, want running then failed", cp.posts)
+	}
+	if cp.posts[0]["event_id"] == cp.posts[1]["event_id"] {
+		t.Error("the start and the end share an event id, so one would be dropped as a retry")
 	}
 }
 
 // The event id is derived from the run and the state, which is what makes a repeated poll
 // idempotent instead of a source of duplicate events.
-func TestRepeatedObservationsCarryTheSameEventID(t *testing.T) {
+func TestRepeatedObservationsCarryTheSameEventIDs(t *testing.T) {
 	cp := newControlPlane(t)
 	reporter := reporterFor(t, cp)
 	agents := []Agent{{ID: "a", State: StateSucceeded}}
@@ -120,12 +157,14 @@ func TestRepeatedObservationsCarryTheSameEventID(t *testing.T) {
 	reporter.Observe(context.Background(), agents)
 	reporter.Observe(context.Background(), agents)
 
-	if len(cp.posts) != 2 {
-		t.Fatalf("the control plane saw %d posts, want 2", len(cp.posts))
+	if len(cp.posts) != 4 {
+		t.Fatalf("the control plane saw %d posts, want 4 (a start and an end, twice)", len(cp.posts))
 	}
-	if cp.posts[0]["event_id"] != cp.posts[1]["event_id"] {
-		t.Errorf("the second poll carried a different event id (%v vs %v), so the record would hold two events for one run",
-			cp.posts[0]["event_id"], cp.posts[1]["event_id"])
+	for i := range 2 {
+		if cp.posts[i]["event_id"] != cp.posts[i+2]["event_id"] {
+			t.Errorf("the second poll carried a different event id for %v (%v vs %v)",
+				cp.posts[i]["state"], cp.posts[i]["event_id"], cp.posts[i+2]["event_id"])
+		}
 	}
 	if id, _ := cp.posts[0]["event_id"].(string); !strings.HasPrefix(id, "a:") {
 		t.Errorf("event id %q is not derived from the run and the state", id)
@@ -144,8 +183,8 @@ func TestOneRefusedReportDoesNotStopTheOthers(t *testing.T) {
 		{ID: "b", State: StateFailed},
 	})
 
-	if len(cp.posts) != 2 {
-		t.Fatalf("the control plane saw %d posts, want 2: a conflict stopped the loop", len(cp.posts))
+	if len(cp.posts) != 4 {
+		t.Fatalf("the control plane saw %d posts, want 4: a conflict stopped the loop", len(cp.posts))
 	}
 }
 
