@@ -137,6 +137,15 @@ func observeRuns(ctx context.Context, spawner broker.Spawner, recorder broker.Re
 				continue
 			}
 			reporter.Observe(ctx, agents)
+
+			// The root agent's terminal state comes from its pod, because the bridge cannot
+			// report the state it reaches by dying and a killed bridge would report nothing.
+			root, err := spawner.Root(ctx)
+			if err != nil {
+				logger.Warn("could not read the root agent to report its state", "err", err)
+				continue
+			}
+			reporter.ObserveRoot(ctx, root)
 		}
 	}
 }
