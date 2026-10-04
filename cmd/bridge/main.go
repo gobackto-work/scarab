@@ -23,6 +23,39 @@ import (
 	"github.com/gobackto-work/scarab/internal/contract"
 )
 
+// watchRunTurns attaches the run observer to the session and starts it.
+//
+// A bridge with no broker is a supported configuration: it serves the workspace and reports
+// nothing, which is what a development cluster looks like.
+func watchRunTurns(ctx context.Context, session *bridge.Session, logger *slog.Logger) {
+	observer := runObserver(logger)
+	if observer == nil {
+		return
+	}
+	session.SetRunObserver(observer)
+	go observer.Run(ctx)
+}
+
+// runObserver builds the root run's observer, or nil when the broker is not configured.
+//
+// A failure here does not stop the bridge. Losing a run state is bad; refusing to serve a
+// workspace because a notification cannot be queued is worse, and it is the failure that
+// would look like the platform being down.
+func runObserver(logger *slog.Logger) *bridge.BrokerObserver {
+	brokerURL := os.Getenv(contract.EnvBrokerURL)
+	tokenPath := os.Getenv(contract.EnvTokenPath)
+	if brokerURL == "" || tokenPath == "" {
+		logger.Warn("run state reporting is off: SCARAB_BROKER_URL or SCARAB_TOKEN_PATH is unset")
+		return nil
+	}
+	observer, err := bridge.NewBrokerObserver(brokerURL, tokenPath, logger)
+	if err != nil {
+		logger.Error("run state reporting is off", "err", err)
+		return nil
+	}
+	return observer
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "scarab-bridge:", err)
@@ -69,6 +102,11 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Reporting the root run's turns. The bridge is the only party that can see a turn
+	// boundary, and it reports through the broker because the broker is the only component
+	// that reports to the control plane.
+	watchRunTurns(ctx, session, logger)
 
 	go session.Run(ctx)
 

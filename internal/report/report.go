@@ -14,6 +14,8 @@ package report
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -167,6 +169,20 @@ func (c *Client) Post(ctx context.Context, r Report) (Result, error) {
 	default:
 		return Result{}, fmt.Errorf("%w: %d %s", ErrRejected, resp.StatusCode, truncate(reply))
 	}
+}
+
+// NewEventID returns a fresh idempotency key.
+//
+// Use it for a state a run can enter more than once. Waiting and resumed are the two: a
+// derived key would make the second visit look like a retry of the first, and the record
+// would silently drop it. Pair it with a retry that reuses the id, so a report that arrived
+// without its answer is not sent twice either.
+func NewEventID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("read random bytes: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // token reads the token for this call.

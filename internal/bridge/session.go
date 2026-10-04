@@ -54,6 +54,8 @@ type Session struct {
 	subs    map[int]*subscriber
 	nextSub int
 	busy    bool
+	// observer is told about each turn boundary. Nil reports nothing.
+	observer RunObserver
 
 	// provider is the provider the user most recently supplied a key for. It is
 	// passed to Pi as --provider so the stored credential is the one used.
@@ -411,6 +413,7 @@ type envelope struct {
 }
 
 // observe tracks whether a run is active, so Prompt knows to steer rather than
+// start a new turn, and tells the run observer about the turn boundary.
 // prompt. agent_settled, not agent_end, means Pi has no automatic work left.
 func (s *Session) observe(record []byte) {
 	var env envelope
@@ -420,9 +423,40 @@ func (s *Session) observe(record []byte) {
 	switch env.Type {
 	case "agent_start":
 		s.setBusy(true)
+		s.notifyRunObserver(true)
 	case "agent_settled":
 		s.setBusy(false)
+		s.notifyRunObserver(false)
 	}
+}
+
+// SetRunObserver attaches an observer, which is told when the run begins a turn and when it
+// settles.
+//
+// A setter and not a constructor parameter, so that a session can be built and tested
+// without a broker. It must be called before Run, because a session with no observer simply
+// reports nothing and there is no later point at which that changes.
+func (s *Session) SetRunObserver(obs RunObserver) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observer = obs
+}
+
+// notifyRunObserver tells the observer about a turn boundary, if one is attached.
+func (s *Session) notifyRunObserver(started bool) {
+	s.mu.Lock()
+	obs := s.observer
+	s.mu.Unlock()
+	if obs == nil {
+		return
+	}
+	// Called with the lock RELEASED. The observer enqueues, and holding the session lock
+	// across that would let a broker that is not keeping up stall the event loop.
+	if started {
+		obs.RunStarted()
+		return
+	}
+	obs.RunSettled()
 }
 
 func (s *Session) broadcast(record []byte) {
