@@ -80,17 +80,19 @@ type Result struct {
 	Appended bool `json:"appended"`
 }
 
-// Client posts reports for one workspace.
+// Client posts reports for the workspace its token was minted for.
 type Client struct {
-	http        *http.Client
-	url         string
-	tokenPath   string
-	workspaceID string
+	http      *http.Client
+	url       string
+	tokenPath string
 }
 
 // New returns a Client. The base URL is the control plane's root, and the token path is a
 // file whose contents are the reporting token.
-func New(baseURL, tokenPath, workspaceID string) (*Client, error) {
+//
+// There is no workspace argument. The token names the workspace and the control plane
+// resolves it from there, so a caller has nothing to get wrong and nothing to spoof.
+func New(baseURL, tokenPath string) (*Client, error) {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("platform url: %w", err)
@@ -101,14 +103,10 @@ func New(baseURL, tokenPath, workspaceID string) (*Client, error) {
 	if tokenPath == "" {
 		return nil, errors.New("the report token path is required")
 	}
-	if workspaceID == "" {
-		return nil, errors.New("the workspace id is required")
-	}
 	return &Client{
-		http:        &http.Client{Timeout: 10 * time.Second},
-		url:         strings.TrimSuffix(baseURL, "/") + fmt.Sprintf(contract.ReportPathTemplate, workspaceID),
-		tokenPath:   tokenPath,
-		workspaceID: workspaceID,
+		http:      &http.Client{Timeout: 10 * time.Second},
+		url:       strings.TrimSuffix(baseURL, "/") + contract.ReportPath,
+		tokenPath: tokenPath,
 	}, nil
 }
 
