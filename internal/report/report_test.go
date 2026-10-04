@@ -15,8 +15,6 @@ import (
 	"github.com/gobackto-work/scarab/internal/contract"
 )
 
-const testWorkspace = "01M3ZX0X9EBQ25P2PC5BK63C5A"
-
 // tokenFile writes a token and returns its path.
 func tokenFile(t *testing.T, token string) string {
 	t.Helper()
@@ -69,7 +67,7 @@ const testToken = "a-token"
 
 func clientFor(t *testing.T, cp *controlPlane) *Client {
 	t.Helper()
-	c, err := New(cp.URL, tokenFile(t, testToken), testWorkspace)
+	c, err := New(cp.URL, tokenFile(t, testToken))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -98,8 +96,10 @@ func TestPostSendsWhatTheControlPlaneExpects(t *testing.T) {
 	}
 	got := cp.got[0]
 
-	if want := "/api/workspaces/" + testWorkspace + "/events"; got.path != want {
-		t.Errorf("path = %q, want %q", got.path, want)
+	// The path names no workspace. The token does, so a caller has nothing to get wrong
+	// and nothing to spoof.
+	if got.path != contract.ReportPath {
+		t.Errorf("path = %q, want %q", got.path, contract.ReportPath)
 	}
 	if got.method != http.MethodPost {
 		t.Errorf("method = %q, want POST", got.method)
@@ -111,8 +111,8 @@ func TestPostSendsWhatTheControlPlaneExpects(t *testing.T) {
 		t.Errorf("content-type = %q, want json", got.ctype)
 	}
 
-	// The body must not name the workspace or the owner: the route and the token carry
-	// those, and a caller-supplied field would be spoofable.
+	// The body must not name the workspace or the owner: the token carries the first and
+	// the record carries the second, so a caller-supplied field would be spoofable.
 	for _, forbidden := range []string{"workspace_id", "owner_id"} {
 		if _, ok := got.body[forbidden]; ok {
 			t.Errorf("the body carries %q", forbidden)
@@ -150,7 +150,7 @@ func TestTheAnswerIsReturned(t *testing.T) {
 func TestTheTokenIsReadPerCall(t *testing.T) {
 	cp := newControlPlane(t)
 	path := tokenFile(t, "first-token")
-	c, err := New(cp.URL, path, testWorkspace)
+	c, err := New(cp.URL, path)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestAnUnreadableAnswerIsTransient(t *testing.T) {
 
 func TestAMissingTokenFileIsReported(t *testing.T) {
 	cp := newControlPlane(t)
-	c, err := New(cp.URL, filepath.Join(t.TempDir(), "absent"), testWorkspace)
+	c, err := New(cp.URL, filepath.Join(t.TempDir(), "absent"))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -256,15 +256,14 @@ func TestAMissingTokenFileIsReported(t *testing.T) {
 
 func TestNewRefusesConfigurationItCannotUse(t *testing.T) {
 	token := tokenFile(t, "a-token")
-	cases := map[string]struct{ url, token, workspace string }{
-		"a relative url":  {"platform:8080", token, testWorkspace},
-		"no scheme":       {"//platform", token, testWorkspace},
-		"no token path":   {"http://platform", "", testWorkspace},
-		"no workspace id": {"http://platform", token, ""},
+	cases := map[string]struct{ url, token string }{
+		"a relative url": {"platform:8080", token},
+		"no scheme":      {"//platform", token},
+		"no token path":  {"http://platform", ""},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := New(c.url, c.token, c.workspace); err == nil {
+			if _, err := New(c.url, c.token); err == nil {
 				t.Error("New accepted it")
 			}
 		})

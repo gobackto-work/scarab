@@ -225,8 +225,11 @@ const (
 	// reporting endpoint and a reporting token is refused at the broker.
 	TokenAudienceReport = "pestilence-ingest"
 
-	// ReportPathTemplate is the reporting endpoint. The verb takes the workspace id.
-	ReportPathTemplate = "/api/workspaces/%s/events"
+	// ReportPath is the reporting endpoint. It names no workspace: the reporting token
+	// does, and the control plane resolves the workspace from it. A path that named one
+	// would be a field a caller could get wrong, and the control plane's rule is that the
+	// workspace comes from the token and never from a request.
+	ReportPath = "/api/events"
 )
 
 // Mode says whether a run can block on a person. A batch run cannot reach StateWaiting,
