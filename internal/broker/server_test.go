@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gobackto-work/scarab/internal/agentpod"
+	"github.com/gobackto-work/scarab/internal/contract"
 )
 
 // stubSpawner records what the HTTP layer asked for, so the tests can assert
@@ -24,6 +25,16 @@ type stubSpawner struct {
 	spawned  int
 	stopped  []string
 	logs     string
+	root     Agent
+}
+
+// Root returns the stubbed root agent. Its id is a pod UID in reality, which is an opaque
+// string here.
+func (s *stubSpawner) Root(context.Context) (Agent, error) {
+	if s.root.ID == "" {
+		return Agent{}, errNotFound(contract.ComponentRoot)
+	}
+	return s.root, nil
 }
 
 func (s *stubSpawner) Spawn(_ context.Context, id string, req agentpod.Request) error {
@@ -284,5 +295,67 @@ func TestServerStop(t *testing.T) {
 	}
 	if len(sp.stopped) != 1 {
 		t.Fatalf("stopped = %v, want one entry", sp.stopped)
+	}
+}
+
+// The bridge posts a state and the broker attaches the run identity from the pod, so the
+// bridge cannot report against a run it does not own, and it never needs to know the id.
+func TestObserveRunAttachesTheRunFromThePod(t *testing.T) {
+	sp := &stubSpawner{agents: map[string]Agent{}, root: Agent{ID: "uid-from-the-pod", State: StateRunning}}
+	rec := &recordingRecorder{}
+	pub, priv := testKey(t)
+	v := testVerifier(t, pub)
+	now := time.Now()
+	v.now = func() time.Time { return now }
+	h := NewServer(sp, v, rec, nil).Handler()
+
+	w := do(t, h, http.MethodPost, "/run", signEdDSA(t, priv, validClaims(now)),
+		`{"event_id":"e1","state":"waiting"}`)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status %d, want 202. body: %s", w.Code, w.Body.String())
+	}
+	if len(rec.observed) != 1 || rec.observed[0] != "uid-from-the-pod|e1|waiting" {
+		t.Errorf("recorded %v, want the run id from the pod and the rest from the request", rec.observed)
+	}
+}
+
+// A body that names a run is refused rather than ignored: the run comes from the pod, and a
+// field that is silently ignored is a field someone will believe.
+func TestObserveRunRefusesARunInTheBody(t *testing.T) {
+	sp := &stubSpawner{agents: map[string]Agent{}, root: Agent{ID: "uid", State: StateRunning}}
+	h, token := testServer(t, sp)
+
+	w := do(t, h, http.MethodPost, "/run", token,
+		`{"event_id":"e1","state":"waiting","run_id":"someone-elses-run"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status %d, want 400. body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestObserveRunNeedsAnEventIDAndAState(t *testing.T) {
+	sp := &stubSpawner{agents: map[string]Agent{}, root: Agent{ID: "uid", State: StateRunning}}
+	h, token := testServer(t, sp)
+
+	for name, body := range map[string]string{
+		"no state": `{"event_id":"e1"}`,
+		"no event": `{"state":"waiting"}`,
+		"neither":  `{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if w := do(t, h, http.MethodPost, "/run", token, body); w.Code != http.StatusBadRequest {
+				t.Errorf("status %d, want 400", w.Code)
+			}
+		})
+	}
+}
+
+// With no root pod there is no identity to attach, so the broker refuses rather than
+// reporting against a run it invented.
+func TestObserveRunWithoutARootPodIsRefused(t *testing.T) {
+	sp := &stubSpawner{agents: map[string]Agent{}}
+	h, token := testServer(t, sp)
+
+	if w := do(t, h, http.MethodPost, "/run", token, `{"event_id":"e1","state":"waiting"}`); w.Code != http.StatusNotFound {
+		t.Errorf("status %d, want 404", w.Code)
 	}
 }

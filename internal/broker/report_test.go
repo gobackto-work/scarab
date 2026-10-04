@@ -169,3 +169,82 @@ func TestAnUnreachableControlPlaneIsSurvivable(t *testing.T) {
 		t.Fatal("reporting blocked against a control plane that is down")
 	}
 }
+
+// recordingRecorder captures what the broker told it, so a test can assert that a run
+// identity came from the pod and not from a request.
+type recordingRecorder struct {
+	observed []string
+	started  []string
+	stopped  []string
+}
+
+func (r *recordingRecorder) Started(_ context.Context, id string) { r.started = append(r.started, id) }
+func (r *recordingRecorder) Stopped(_ context.Context, id string) { r.stopped = append(r.stopped, id) }
+func (r *recordingRecorder) Observed(_ context.Context, runID, eventID, state string) {
+	r.observed = append(r.observed, runID+"|"+eventID+"|"+state)
+}
+
+// The broker derives the END of the root run and nothing else. A pod's Running phase cannot
+// tell a run that is working from one that is waiting for a person, so reporting it would
+// fabricate a resumed every time the bridge had recorded a waiting.
+func TestObserveRootReportsOnlyTheEnd(t *testing.T) {
+	cp := newControlPlane(t)
+	reporter := reporterFor(t, cp)
+
+	reporter.ObserveRoot(context.Background(), Agent{ID: "uid-1", State: StateRunning})
+	if len(cp.posts) != 0 {
+		t.Errorf("a running root was reported as %+v, want nothing", cp.posts)
+	}
+
+	reporter.ObserveRoot(context.Background(), Agent{ID: "uid-1", State: StateSucceeded})
+	if len(cp.posts) != 1 {
+		t.Fatalf("the control plane saw %d posts, want 1", len(cp.posts))
+	}
+	got := cp.posts[0]
+	if got["state"] != contract.StateSucceeded {
+		t.Errorf("state = %v, want %q", got["state"], contract.StateSucceeded)
+	}
+	// The root run is the interactive one. Reporting batch here would make the record
+	// refuse the waiting states the bridge sends for the same run.
+	if got["mode"] != contract.ModeInteractive {
+		t.Errorf("mode = %v, want %q", got["mode"], contract.ModeInteractive)
+	}
+	if got["run_id"] != "uid-1" {
+		t.Errorf("run_id = %v, want the pod uid", got["run_id"])
+	}
+}
+
+func TestTheBridgeRelaysAWaitingState(t *testing.T) {
+	cp := newControlPlane(t)
+	reporterFor(t, cp).Observed(context.Background(), "uid-1", "an-event-id", contract.StateWaiting)
+
+	if len(cp.posts) != 1 {
+		t.Fatalf("the control plane saw %d posts, want 1", len(cp.posts))
+	}
+	got := cp.posts[0]
+	if got["state"] != contract.StateWaiting {
+		t.Errorf("state = %v, want %q", got["state"], contract.StateWaiting)
+	}
+	if got["mode"] != contract.ModeInteractive {
+		t.Errorf("mode = %v, want %q, so the record would refuse a waiting run", got["mode"], contract.ModeInteractive)
+	}
+	// The bridge supplies the event id because it owns the retry. Deriving one here would
+	// make a second visit to waiting look like a retry of the first.
+	if got["event_id"] != "an-event-id" {
+		t.Errorf("event_id = %v, want the id the bridge supplied", got["event_id"])
+	}
+}
+
+// The bridge IS the process, so it cannot see the process end. A terminal state from it
+// would be a guess, and the broker derives those from the pod instead.
+func TestTheBridgeCannotReportATerminalState(t *testing.T) {
+	cp := newControlPlane(t)
+	reporter := reporterFor(t, cp)
+
+	for _, state := range []string{contract.StateSucceeded, contract.StateFailed, contract.StateCancelled} {
+		reporter.Observed(context.Background(), "uid-1", "an-event-id", state)
+	}
+	if len(cp.posts) != 0 {
+		t.Errorf("the bridge reported %+v, want nothing accepted", cp.posts)
+	}
+}

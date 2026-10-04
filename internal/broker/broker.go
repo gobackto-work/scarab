@@ -84,8 +84,8 @@ const (
 	StateFailed    = "failed"
 )
 
-// Spawner creates and inspects workers. It is an interface so the HTTP layer can
-// be tested without a cluster.
+// Spawner creates and inspects the workspace's agents. It is an interface so the HTTP
+// layer can be tested without a cluster.
 type Spawner interface {
 	// Spawn creates a worker Job named from agentID.
 	Spawn(ctx context.Context, agentID string, req agentpod.Request) error
@@ -97,6 +97,8 @@ type Spawner interface {
 	Logs(ctx context.Context, agentID string) (io.ReadCloser, error)
 	// Stop terminates the worker.
 	Stop(ctx context.Context, agentID string) error
+	// Root returns the workspace's root agent. Its id is its pod's UID.
+	Root(ctx context.Context) (Agent, error)
 }
 
 // Error is an error that carries the HTTP status and a message safe to show the
