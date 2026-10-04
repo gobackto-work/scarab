@@ -136,6 +136,16 @@ const (
 	EnvContainerMemMax = "SCARAB_CONTAINER_MEM_MAX"
 	EnvTokenPublicKey  = "SCARAB_TOKEN_PUBLIC_KEY"
 	EnvTokenAudience   = "SCARAB_TOKEN_AUDIENCE"
+	// Run state reporting. The broker is the only component that reports to the control
+	// plane, because it is the only one that outlives the agent processes: an agent
+	// cannot report the state it reaches by dying.
+	//
+	// EnvPlatformURL is the control plane's base URL, and EnvReportTokenPath is a file
+	// whose contents are the reporting token. It is a path and not the value, for the
+	// same reason the bridge's token is: the control plane rotates it at half its TTL and
+	// the kubelet replaces a mounted file in place.
+	EnvPlatformURL     = "SCARAB_PLATFORM_URL"
+	EnvReportTokenPath = "SCARAB_REPORT_TOKEN_PATH"
 	// Broker TLS (handoff §8.5). pestilence sets both together or neither; the
 	// broker refuses to start with half a configuration rather than quietly
 	// serving plaintext.
@@ -204,4 +214,34 @@ const (
 // Resource defaults, mirroring the workspace LimitRange (handoff §4.3).
 const (
 	PodBudget = 6 // root agent + up to 5 workers; the broker is not charged
+)
+
+// The vocabulary of a run, from pestilence/docs/event-record.md. The normative
+// description is that document; these constants exist so the two repositories cannot
+// spell a state differently.
+const (
+	// TokenAudienceReport is the audience of the token the control plane accepts a report
+	// with. It is not the broker audience, so an agent's token is refused at the
+	// reporting endpoint and a reporting token is refused at the broker.
+	TokenAudienceReport = "pestilence-ingest"
+
+	// ReportPathTemplate is the reporting endpoint. The verb takes the workspace id.
+	ReportPathTemplate = "/api/workspaces/%s/events"
+)
+
+// Mode says whether a run can block on a person. A batch run cannot reach StateWaiting,
+// because a run that waits for a person who is not there waits for ever.
+const (
+	ModeInteractive = "interactive"
+	ModeBatch       = "batch"
+)
+
+// The states a run can be in.
+const (
+	StateRunning         = "running"
+	StateWaiting         = "waiting"
+	StateSucceeded       = "succeeded"
+	StateFailed          = "failed"
+	StateCancelled       = "cancelled"
+	StateBudgetExhausted = "budget_exhausted"
 )
