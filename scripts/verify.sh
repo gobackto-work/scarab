@@ -119,21 +119,7 @@ step "go: format, vet, lint, dead code"
 check_quiet "gofmt" gofmt -l .
 check "go vet" go vet "${GO_PKGS[@]}"
 check "staticcheck" staticcheck "${GO_PKGS[@]}"
-# internal/report is not reachable from main yet. The broker's reporting is the next
-# change, and until it lands deadcode reports the whole package, because it roots its
-# analysis at main. Every function in the package is exercised by its tests. Remove this
-# filter in the change that wires the package in, and do not widen it to another package.
-# See docs/skipped-checks.md.
-WIRED=()
-# The same scope as GO_PKGS. A bare ./... reaches into node_modules, which vendors Go files
-# and is not ours to check.
-while IFS= read -r pkg; do
-	case "$pkg" in
-	*/internal/report) continue ;;
-	esac
-	WIRED+=("$pkg")
-done < <(go list ./cmd/... ./internal/...)
-check_quiet "deadcode (unreachable functions)" deadcode "${WIRED[@]}"
+check_quiet "deadcode (unreachable functions)" deadcode "${GO_PKGS[@]}"
 check "golangci-lint (complexity, duplication, security)" golangci-lint run "${GO_PKGS[@]}"
 
 step "go: tests and vulnerabilities"

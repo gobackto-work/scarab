@@ -14,8 +14,6 @@ package report
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,6 +50,14 @@ var (
 type Report struct {
 	// EventID is the idempotency key. A retry carries the same value, so a report that
 	// arrived but whose answer was lost does not become a second event.
+	//
+	// DERIVE it from the run and the state when a run reaches that state once, which is
+	// true of run.started and of every terminal state. A repeated report is then a no-op,
+	// which is what makes a poll idempotent and a lost report self-healing.
+	//
+	// RANDOMISE it when a state can be entered more than once, which is true of waiting and
+	// resumed. A derived key would make the second visit to waiting look like a retry of
+	// the first, and the record would silently drop it.
 	EventID string
 
 	RunID string
@@ -161,17 +167,6 @@ func (c *Client) Post(ctx context.Context, r Report) (Result, error) {
 	default:
 		return Result{}, fmt.Errorf("%w: %d %s", ErrRejected, resp.StatusCode, truncate(reply))
 	}
-}
-
-// NewEventID returns an idempotency key. It is random rather than derived, because two
-// genuine transitions of one run can enter the same state, and a derived key would make
-// the second one look like a retry of the first.
-func NewEventID() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("read random bytes: %w", err)
-	}
-	return hex.EncodeToString(b), nil
 }
 
 // token reads the token for this call.

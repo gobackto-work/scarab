@@ -78,7 +78,7 @@ func testServer(t *testing.T, sp *stubSpawner) (http.Handler, string) {
 	v := testVerifier(t, pub)
 	now := time.Now()
 	v.now = func() time.Time { return now }
-	return NewServer(sp, v, nil).Handler(), signEdDSA(t, priv, validClaims(now))
+	return NewServer(sp, v, nil, nil).Handler(), signEdDSA(t, priv, validClaims(now))
 }
 
 func do(t *testing.T, h http.Handler, method, path, token, body string) *httptest.ResponseRecorder {
@@ -125,7 +125,7 @@ func TestServerRejectsTokenForAnotherWorkspace(t *testing.T) {
 	v := testVerifier(t, pub)
 	now := time.Now()
 	v.now = func() time.Time { return now }
-	h := NewServer(&stubSpawner{}, v, nil).Handler()
+	h := NewServer(&stubSpawner{}, v, nil, nil).Handler()
 
 	claims := validClaims(now)
 	claims.Workspace = "other"
