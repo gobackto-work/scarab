@@ -20,20 +20,27 @@ import (
 type Server struct {
 	spawner  Spawner
 	verifier *Verifier
+	// recorder records a worker's run state. Never nil: NewServer substitutes a discarding
+	// one, so no handler needs a nil check and reporting stays a side effect.
+	recorder Recorder
 	// maxTaskBytes bounds the decoded task so a hostile agent cannot make the
 	// broker hold an unbounded string.
 	maxTaskBytes int64
 	logger       *slog.Logger
 }
 
-// NewServer returns a Server. A nil logger discards.
-func NewServer(spawner Spawner, verifier *Verifier, logger *slog.Logger) *Server {
+// NewServer returns a Server. A nil logger discards, and a nil recorder discards reports.
+func NewServer(spawner Spawner, verifier *Verifier, recorder Recorder, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	if recorder == nil {
+		recorder = nopRecorder{}
 	}
 	return &Server{
 		spawner:      spawner,
 		verifier:     verifier,
+		recorder:     recorder,
 		maxTaskBytes: agentpod.MaxTaskBytes,
 		logger:       logger,
 	}
@@ -165,6 +172,9 @@ func (s *Server) handleSpawn(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "spawn", err)
 		return
 	}
+	// After the worker exists, never before. A report about a run that failed to start would
+	// be a run the record believes in and nothing is running.
+	s.recorder.Started(r.Context(), id)
 	writeJSON(w, http.StatusCreated, spawnResponse{AgentID: id})
 }
 
@@ -205,10 +215,14 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
-	if err := s.spawner.Stop(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if err := s.spawner.Stop(r.Context(), id); err != nil {
 		s.fail(w, "stop", err)
 		return
 	}
+	// Before the response, because stopping removes the job and nothing can report on it
+	// afterwards.
+	s.recorder.Stopped(r.Context(), id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

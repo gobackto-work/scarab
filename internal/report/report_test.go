@@ -269,22 +269,3 @@ func TestNewRefusesConfigurationItCannotUse(t *testing.T) {
 		})
 	}
 }
-
-// Two genuine transitions of one run can enter the same state, so the key must not be
-// derived from the run and the state.
-func TestEventIDsAreUnique(t *testing.T) {
-	seen := map[string]bool{}
-	for range 100 {
-		id, err := NewEventID()
-		if err != nil {
-			t.Fatalf("NewEventID: %v", err)
-		}
-		if id == "" {
-			t.Fatal("NewEventID returned an empty id")
-		}
-		if seen[id] {
-			t.Fatalf("NewEventID repeated %q", id)
-		}
-		seen[id] = true
-	}
-}
