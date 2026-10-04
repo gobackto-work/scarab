@@ -21,14 +21,19 @@ type Recorder interface {
 	Started(ctx context.Context, agentID string)
 	// Stopped records that a person ended a worker.
 	Stopped(ctx context.Context, agentID string)
+	// Observed relays a state the bridge saw for the root run. The bridge sees turn
+	// boundaries and the broker cannot, so this is the one signal the broker relays rather
+	// than derives.
+	Observed(ctx context.Context, runID, eventID, state string)
 }
 
 // nopRecorder is what a Server without a control plane gets, so that the HTTP layer needs
 // no nil checks and a test needs no control plane.
 type nopRecorder struct{}
 
-func (nopRecorder) Started(context.Context, string) {}
-func (nopRecorder) Stopped(context.Context, string) {}
+func (nopRecorder) Started(context.Context, string)                  {}
+func (nopRecorder) Stopped(context.Context, string)                  {}
+func (nopRecorder) Observed(context.Context, string, string, string) {}
 
 // Reporter records the run state of this workspace's workers.
 //
@@ -59,7 +64,7 @@ func NewReporter(client *report.Client, logger *slog.Logger) *Reporter {
 // its result under `.agents/<agent-id>/`, so a parent waiting for a child already holds the
 // identifier of the run it is waiting on. Nothing has to be plumbed to join the two.
 func (r *Reporter) Started(ctx context.Context, agentID string) {
-	r.post(ctx, agentID, contract.StateRunning)
+	r.send(ctx, agentID+":"+contract.StateRunning, agentID, contract.StateRunning, contract.ModeBatch)
 }
 
 // Stopped records that a person ended a worker.
@@ -67,7 +72,7 @@ func (r *Reporter) Started(ctx context.Context, agentID string) {
 // It is reported at the stop, and not left to the poll, because stopping deletes the job
 // and a deleted job is indistinguishable from one that never existed.
 func (r *Reporter) Stopped(ctx context.Context, agentID string) {
-	r.post(ctx, agentID, contract.StateCancelled)
+	r.send(ctx, agentID+":"+contract.StateCancelled, agentID, contract.StateCancelled, contract.ModeBatch)
 }
 
 // Observe records the state of every worker that has one worth recording.
@@ -82,8 +87,46 @@ func (r *Reporter) Observe(ctx context.Context, agents []Agent) {
 		if !ok {
 			continue
 		}
-		r.post(ctx, a.ID, state)
+		r.send(ctx, a.ID+":"+state, a.ID, state, contract.ModeBatch)
 	}
+}
+
+// ObserveRoot reports the root run's terminal state, and only that.
+//
+// A pod's phase says a running pod's run is somewhere non-terminal, and nothing in the pod
+// distinguishes a run that is working from one that is waiting for a person. Reporting
+// `running` from here would therefore fabricate a `resumed` every time the bridge had
+// recorded a `waiting`, so the broker derives the end of the run and leaves the rest to the
+// bridge.
+//
+// A root run that never started has no state to end, and the record refuses a terminal
+// transition from nowhere. That is not a gap: a root pod that dies before the bridge
+// reports is a WORKSPACE failure, and pestilence already owns the workspace's state.
+func (r *Reporter) ObserveRoot(ctx context.Context, root Agent) {
+	switch root.State {
+	case StateSucceeded, StateFailed:
+		r.send(ctx, root.ID+":"+root.State, root.ID, root.State, contract.ModeInteractive)
+	}
+}
+
+// Observed relays the root run's state as the bridge reported it.
+//
+// The bridge holds the session, so it is the only party that can tell a finished turn from
+// one that is waiting for a person. It has no Kubernetes access and no control-plane
+// credential, so it tells the broker and the broker reports.
+//
+// Only a non-terminal state is accepted, and the bridge supplies the event id because it
+// owns the retry. A terminal state from the bridge would be a guess: the bridge IS the
+// process, so it cannot see the process end.
+func (r *Reporter) Observed(ctx context.Context, runID, eventID, state string) {
+	switch state {
+	case contract.StateRunning, contract.StateWaiting:
+	default:
+		r.logger.Warn("the bridge reported a state only the broker may report",
+			"run", runID, "state", state)
+		return
+	}
+	r.send(ctx, eventID, runID, state, contract.ModeInteractive)
 }
 
 // runStateFor maps a worker's state onto a run state.
@@ -102,17 +145,14 @@ func runStateFor(agentState string) (string, bool) {
 	return "", false
 }
 
-// post sends one report. It returns nothing, because its callers cannot act on a failure:
+// send posts one report. It returns nothing, because its callers cannot act on a failure:
 // they are either a request that must not fail or a poll that will run again.
-func (r *Reporter) post(ctx context.Context, runID, state string) {
+func (r *Reporter) send(ctx context.Context, eventID, runID, state, mode string) {
 	_, err := r.client.Post(ctx, report.Report{
-		// Derived, not random, and safe because a batch run reaches each of these states
-		// once. It is what makes a repeated poll idempotent and a lost report
-		// self-healing.
-		EventID: runID + ":" + state,
+		EventID: eventID,
 		RunID:   runID,
 		State:   state,
-		Mode:    contract.ModeBatch,
+		Mode:    mode,
 		At:      time.Now().UTC(),
 	})
 	switch {

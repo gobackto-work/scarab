@@ -160,6 +160,64 @@ func (k *KubeSpawner) podForJob(ctx context.Context, name string) (string, error
 	return newest.Name, nil
 }
 
+// Root returns the workspace's root agent, whose run id is its pod's UID.
+//
+// The UID and not a generated id, because the broker is the only party that can see the pod
+// and the bridge is the only party that can see a turn boundary. The bridge has NO
+// Kubernetes access at all, so it asks for this. A UID is stable for the pod's life, which
+// is what a root run lasts, and it changes on a restart, which the contract says is a new
+// run and not a pause.
+func (k *KubeSpawner) Root(ctx context.Context) (Agent, error) {
+	pods, err := k.client.CoreV1().Pods(k.cfg.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: contract.LabelComponent + "=" + contract.ComponentRoot,
+	})
+	if err != nil {
+		return Agent{}, k.mapKubeError(err)
+	}
+	if len(pods.Items) == 0 {
+		return Agent{}, errNotFound(contract.ComponentRoot)
+	}
+	// A Deployment has one pod at a time; if a rollout leaves two, the newest is the one
+	// serving.
+	newest := pods.Items[0]
+	for i := range pods.Items {
+		if pods.Items[i].CreationTimestamp.After(newest.CreationTimestamp.Time) {
+			newest = pods.Items[i]
+		}
+	}
+	return agentFromPod(&newest), nil
+}
+
+// agentFromPod maps a pod's phase onto an agent state.
+//
+// A pod has no completion conditions to read, unlike a job, so the phase is the whole
+// signal. That is enough for what the broker uses it for, and it is worth being exact about
+// what it does NOT say: a Running pod is one whose run is somewhere non-terminal, and
+// nothing in the pod distinguishes a run that is working from one that is waiting for a
+// person. Only the bridge knows that, which is why the broker reports the terminal state
+// from here and relays the rest.
+func agentFromPod(pod *corev1.Pod) Agent {
+	agent := Agent{
+		ID:        string(pod.UID),
+		CreatedAt: formatTime(pod.CreationTimestamp.Time),
+	}
+	if pod.Status.StartTime != nil {
+		agent.StartedAt = formatTime(pod.Status.StartTime.Time)
+	}
+	switch pod.Status.Phase {
+	case corev1.PodRunning:
+		agent.State = StateRunning
+	case corev1.PodSucceeded:
+		agent.State = StateSucceeded
+	case corev1.PodFailed:
+		agent.State = StateFailed
+		agent.Message = pod.Status.Message
+	default:
+		agent.State = StatePending
+	}
+	return agent
+}
+
 // checkBudget refuses a spawn that would exceed the workspace's pod count or
 // memory-request budget.
 //
