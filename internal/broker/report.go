@@ -75,19 +75,22 @@ func (r *Reporter) Stopped(ctx context.Context, agentID string) {
 	r.send(ctx, agentID+":"+contract.StateCancelled, agentID, contract.StateCancelled, contract.ModeBatch)
 }
 
-// Observe records the state of every worker that has one worth recording.
+// Observe records the state of every worker.
 //
-// It is called on every poll, and it is idempotent by construction: the event id is derived
-// from the run and the state, and a run reaches each of these states once. So a worker that
-// is still running, or one whose terminal state was already recorded, costs one refused
-// report rather than a duplicate event.
+// The START is reported for every worker, whatever phase it is in, before anything else.
+// A worker can begin and end inside one poll interval, and a terminal state on its own is
+// refused: a run cannot end without having begun. So the poll asserts the start it knows
+// happened -- the job exists and a pod was created for it -- and then the end, if there is
+// one. Both are no-ops once the record holds them, so the poll stays idempotent.
+//
+// The alternative, deriving the start from the job's phase, is what this replaces: a phase
+// that says running can fall entirely between two polls, and then the run is invisible.
 func (r *Reporter) Observe(ctx context.Context, agents []Agent) {
 	for _, a := range agents {
-		state, ok := runStateFor(a.State)
-		if !ok {
-			continue
+		r.send(ctx, a.ID+":"+contract.StateRunning, a.ID, contract.StateRunning, contract.ModeBatch)
+		if state, ok := terminalState(a.State); ok {
+			r.send(ctx, a.ID+":"+state, a.ID, state, contract.ModeBatch)
 		}
-		r.send(ctx, a.ID+":"+state, a.ID, state, contract.ModeBatch)
 	}
 }
 
@@ -129,14 +132,13 @@ func (r *Reporter) Observed(ctx context.Context, runID, eventID, state string) {
 	r.send(ctx, eventID, runID, state, contract.ModeInteractive)
 }
 
-// runStateFor maps a worker's state onto a run state.
+// terminalState returns the run state for a worker that has ended.
 //
-// Pending is absent on purpose: a run that has not started has no state to record, and the
-// record refuses a run that begins anywhere but running.
-func runStateFor(agentState string) (string, bool) {
+// Only the terminal states are here. A worker's running state is NOT derived from the job's
+// phase: Observe asserts it for every job, for the reason given there. A phase that says
+// running is an observation, and observations can be missed.
+func terminalState(agentState string) (string, bool) {
 	switch agentState {
-	case StateRunning:
-		return contract.StateRunning, true
 	case StateSucceeded:
 		return contract.StateSucceeded, true
 	case StateFailed:
@@ -159,10 +161,11 @@ func (r *Reporter) send(ctx context.Context, eventID, runID, state, mode string)
 	case err == nil:
 		return
 	case errors.Is(err, report.ErrConflict):
-		// Expected, and not a fault. The record already holds this state, or it holds a
-		// state this run cannot leave -- for instance a poll that arrives after the run was
-		// stopped. The record is the authority and there is nothing to do about it.
-		r.logger.Debug("run state not recorded", "run", runID, "state", state, "err", err)
+		// Logged and NOT swallowed. A conflict is one of two things: a poll that arrives
+		// after the run was stopped, which is harmless, or a run the record has never seen
+		// begin, which means an event was lost. They are indistinguishable from here, so
+		// both are visible -- a refused report is never something to hide in a debug log.
+		r.logger.Warn("the record refused a run state", "run", runID, "state", state, "err", err)
 	default:
 		r.logger.Warn("could not report a run state", "run", runID, "state", state, "err", err)
 	}
