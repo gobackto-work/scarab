@@ -304,11 +304,11 @@ func newTLSBroker(t *testing.T) (*fakeBroker, string) {
 		fb.bodies = append(fb.bodies, body)
 		w.WriteHeader(fb.code)
 	}))
-	fb.Server.TLS = &tls.Config{
+	fb.TLS = &tls.Config{
 		Certificates: []tls.Certificate{{Certificate: [][]byte{leafDER}, PrivateKey: leafKey}},
 		MinVersion:   tls.VersionTLS12,
 	}
-	fb.Server.StartTLS()
+	fb.StartTLS()
 	t.Cleanup(fb.Close)
 
 	return fb, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}))
