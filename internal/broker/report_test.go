@@ -68,8 +68,8 @@ func TestStartedRecordsARunningBatchRun(t *testing.T) {
 	if got["mode"] != contract.ModeBatch {
 		t.Errorf("mode = %v, want %q", got["mode"], contract.ModeBatch)
 	}
-	if got["run_id"] != "01M3ZX0X9EBQ25P2PC5BK63C5B" {
-		t.Errorf("run_id = %v", got["run_id"])
+	if got["runId"] != "01M3ZX0X9EBQ25P2PC5BK63C5B" {
+		t.Errorf("run_id = %v", got["runId"])
 	}
 }
 
@@ -103,7 +103,7 @@ func TestObserveReportsTheStartBeforeTheEnd(t *testing.T) {
 	starts := map[string]int{}
 	for i, post := range cp.posts {
 		if post["state"] == contract.StateRunning {
-			starts[post["run_id"].(string)] = i
+			starts[post["runId"].(string)] = i
 		}
 	}
 	for _, run := range []string{"a", "b", "c", "d"} {
@@ -119,8 +119,8 @@ func TestObserveReportsTheStartBeforeTheEnd(t *testing.T) {
 		switch post["state"] {
 		case contract.StateSucceeded, contract.StateFailed:
 			ends++
-			if starts[post["run_id"].(string)] > i {
-				t.Errorf("run %v ended before it started", post["run_id"])
+			if starts[post["runId"].(string)] > i {
+				t.Errorf("run %v ended before it started", post["runId"])
 			}
 		}
 	}
@@ -142,7 +142,7 @@ func TestAWorkerThatEndedBeforeThePollStillRecordsBothEvents(t *testing.T) {
 	if cp.posts[0]["state"] != contract.StateRunning || cp.posts[1]["state"] != contract.StateFailed {
 		t.Errorf("posts = %v, want running then failed", cp.posts)
 	}
-	if cp.posts[0]["event_id"] == cp.posts[1]["event_id"] {
+	if cp.posts[0]["eventId"] == cp.posts[1]["eventId"] {
 		t.Error("the start and the end share an event id, so one would be dropped as a retry")
 	}
 }
@@ -161,12 +161,12 @@ func TestRepeatedObservationsCarryTheSameEventIDs(t *testing.T) {
 		t.Fatalf("the control plane saw %d posts, want 4 (a start and an end, twice)", len(cp.posts))
 	}
 	for i := range 2 {
-		if cp.posts[i]["event_id"] != cp.posts[i+2]["event_id"] {
+		if cp.posts[i]["eventId"] != cp.posts[i+2]["eventId"] {
 			t.Errorf("the second poll carried a different event id for %v (%v vs %v)",
-				cp.posts[i]["state"], cp.posts[i]["event_id"], cp.posts[i+2]["event_id"])
+				cp.posts[i]["state"], cp.posts[i]["eventId"], cp.posts[i+2]["eventId"])
 		}
 	}
-	if id, _ := cp.posts[0]["event_id"].(string); !strings.HasPrefix(id, "a:") {
+	if id, _ := cp.posts[0]["eventId"].(string); !strings.HasPrefix(id, "a:") {
 		t.Errorf("event id %q is not derived from the run and the state", id)
 	}
 }
@@ -248,8 +248,8 @@ func TestObserveRootReportsOnlyTheEnd(t *testing.T) {
 	if got["mode"] != contract.ModeInteractive {
 		t.Errorf("mode = %v, want %q", got["mode"], contract.ModeInteractive)
 	}
-	if got["run_id"] != "uid-1" {
-		t.Errorf("run_id = %v, want the pod uid", got["run_id"])
+	if got["runId"] != "uid-1" {
+		t.Errorf("run_id = %v, want the pod uid", got["runId"])
 	}
 }
 
@@ -269,8 +269,8 @@ func TestTheBridgeRelaysAWaitingState(t *testing.T) {
 	}
 	// The bridge supplies the event id because it owns the retry. Deriving one here would
 	// make a second visit to waiting look like a retry of the first.
-	if got["event_id"] != "an-event-id" {
-		t.Errorf("event_id = %v, want the id the bridge supplied", got["event_id"])
+	if got["eventId"] != "an-event-id" {
+		t.Errorf("event_id = %v, want the id the bridge supplied", got["eventId"])
 	}
 }
 

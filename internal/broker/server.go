@@ -236,7 +236,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 // there is nothing here to spoof -- the same rule the control plane holds, applied one hop
 // earlier.
 type observeRunRequest struct {
-	EventID string `json:"event_id"`
+	EventID string `json:"eventId"`
 	State   string `json:"state"`
 }
 
