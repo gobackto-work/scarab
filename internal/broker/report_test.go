@@ -287,3 +287,48 @@ func TestTheBridgeCannotReportATerminalState(t *testing.T) {
 		t.Errorf("the bridge reported %+v, want nothing accepted", cp.posts)
 	}
 }
+
+// A replaced pod is a different run, and the one before it can never be ended by anybody else.
+// Without this it stays "waiting for you" for ever, which is a false alarm once anything
+// notifies on it.
+func TestAReplacedBridgeClosesTheRunItLeftBehind(t *testing.T) {
+	cp := newControlPlane(t)
+	reporter := reporterFor(t, cp)
+
+	// The first run has no predecessor, so nothing is closed on the first look.
+	reporter.ObserveRoot(context.Background(), Agent{ID: "pod-1", State: StateRunning})
+	if len(cp.posts) != 0 {
+		t.Fatalf("the first observation posted %+v, want nothing", cp.posts)
+	}
+
+	// The pod is replaced. The old run is closed, and the new one is not claimed to be
+	// running -- the bridge is the only party that can say that.
+	reporter.ObserveRoot(context.Background(), Agent{ID: "pod-2", State: StateRunning})
+	if len(cp.posts) != 1 {
+		t.Fatalf("the replacement posted %d times, want 1", len(cp.posts))
+	}
+	got := cp.posts[0]
+	if got["runId"] != "pod-1" || got["state"] != contract.StateFailed {
+		t.Errorf("closed %v as %v, want pod-1 as failed", got["runId"], got["state"])
+	}
+
+	// And the new run is reported when it ends, in the ordinary way.
+	reporter.ObserveRoot(context.Background(), Agent{ID: "pod-2", State: StateSucceeded})
+	if len(cp.posts) != 2 || cp.posts[1]["runId"] != "pod-2" || cp.posts[1]["state"] != contract.StateSucceeded {
+		t.Errorf("the new run's end was not reported: %+v", cp.posts[1:])
+	}
+}
+
+// The same pod seen twice is not a replacement, and a poll that repeats must not close a run
+// that is still going.
+func TestTheSamePodIsNotAReplacement(t *testing.T) {
+	cp := newControlPlane(t)
+	reporter := reporterFor(t, cp)
+
+	for range 3 {
+		reporter.ObserveRoot(context.Background(), Agent{ID: "pod-1", State: StateRunning})
+	}
+	if len(cp.posts) != 0 {
+		t.Errorf("repeated polls of one pod posted %+v, want nothing", cp.posts)
+	}
+}
