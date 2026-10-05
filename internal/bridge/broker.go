@@ -3,6 +3,8 @@ package bridge
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,6 +56,7 @@ type RunObserver interface {
 type BrokerObserver struct {
 	url       string
 	tokenPath string
+	http      *http.Client
 	queue     chan observation
 	logger    *slog.Logger
 }
@@ -64,7 +67,13 @@ type observation struct {
 }
 
 // NewBrokerObserver returns an observer that posts to the broker's run endpoint.
-func NewBrokerObserver(brokerURL, tokenPath string, logger *slog.Logger) (*BrokerObserver, error) {
+//
+// caPath is the broker's own certificate authority. The broker serves TLS with a
+// per-workspace certificate that it signed itself, so the system trust store rejects it.
+// A report that fails to verify never arrives, which is a failure that looks exactly like
+// an agent nobody prompted. Empty means the broker is on plaintext, and then there is
+// nothing to trust.
+func NewBrokerObserver(brokerURL, tokenPath, caPath string, logger *slog.Logger) (*BrokerObserver, error) {
 	if !strings.HasPrefix(brokerURL, "http://") && !strings.HasPrefix(brokerURL, "https://") {
 		return nil, fmt.Errorf("broker url %q is not absolute", brokerURL)
 	}
@@ -74,9 +83,26 @@ func NewBrokerObserver(brokerURL, tokenPath string, logger *slog.Logger) (*Broke
 	if logger == nil {
 		logger = slog.Default()
 	}
+
+	client := &http.Client{Timeout: runPostTimeout}
+	if caPath != "" {
+		pem, err := os.ReadFile(caPath)
+		if err != nil {
+			return nil, fmt.Errorf("read the broker CA: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("the broker CA at %s holds no certificate", caPath)
+		}
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+		}
+	}
+
 	return &BrokerObserver{
 		url:       strings.TrimSuffix(brokerURL, "/") + "/run",
 		tokenPath: tokenPath,
+		http:      client,
 		queue:     make(chan observation, runQueueDepth),
 		logger:    logger,
 	}, nil
@@ -164,7 +190,7 @@ func (o *BrokerObserver) attempt(ctx context.Context, obs observation) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+trimmed)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := o.http.Do(req)
 	if err != nil {
 		return err
 	}

@@ -2,9 +2,18 @@ package bridge
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"log/slog"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -43,12 +52,25 @@ func newFakeBroker(t *testing.T) *fakeBroker {
 }
 
 func observerFor(t *testing.T, fb *fakeBroker) *BrokerObserver {
+	return observerWithCA(t, fb, "")
+}
+
+// observerWithCA builds an observer, optionally trusting a CA in PEM. ca is what the real
+// broker needs: it serves TLS with a per-workspace certificate it signed itself.
+func observerWithCA(t *testing.T, fb *fakeBroker, ca string) *BrokerObserver {
 	t.Helper()
 	token := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(token, []byte("a-token\n"), 0o600); err != nil {
+	if err := os.WriteFile(token, []byte("a-token"), 0o600); err != nil {
 		t.Fatalf("write token: %v", err)
 	}
-	obs, err := NewBrokerObserver(fb.URL, token, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	caPath := ""
+	if ca != "" {
+		caPath = filepath.Join(t.TempDir(), "ca.crt")
+		if err := os.WriteFile(caPath, []byte(ca), 0o600); err != nil {
+			t.Fatalf("write ca: %v", err)
+		}
+	}
+	obs, err := NewBrokerObserver(fb.URL, token, caPath, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("NewBrokerObserver: %v", err)
 	}
@@ -183,11 +205,19 @@ func TestNewBrokerObserverRefusesConfigurationItCannotUse(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewBrokerObserver(c.url, c.token, nil); err == nil {
+			if _, err := NewBrokerObserver(c.url, c.token, "", nil); err == nil {
 				t.Error("NewBrokerObserver accepted it")
 			}
 		})
 	}
+
+	// A CA path that is set but unreadable is a startup failure and not a silent fallback to
+	// the system trust store, because that fallback is the bug this parameter exists to fix.
+	t.Run("an unreadable broker CA", func(t *testing.T) {
+		if _, err := NewBrokerObserver("https://broker", token, filepath.Join(t.TempDir(), "absent"), nil); err == nil {
+			t.Error("NewBrokerObserver accepted an unreadable CA")
+		}
+	})
 }
 
 // fakeRunObserver records the turn boundaries it was told about.
@@ -221,4 +251,84 @@ func TestASessionWithoutAnObserverIsFine(t *testing.T) {
 	session.observe([]byte(`{"type":"agent_start"}`))
 	session.observe([]byte(`{"type":"agent_settled"}`))
 	session.observe([]byte(`not json`))
+}
+
+// newTLSBroker starts an HTTPS broker whose certificate is signed by its own CA, which is
+// what the real one does. It returns the CA in PEM.
+func newTLSBroker(t *testing.T) (*fakeBroker, string) {
+	t.Helper()
+
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate the CA key: %v", err)
+	}
+	caTmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "scarab-broker-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create the CA: %v", err)
+	}
+	caCert, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatalf("parse the CA: %v", err)
+	}
+
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate the leaf key: %v", err)
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "broker"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}, caCert, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create the leaf: %v", err)
+	}
+
+	fb := &fakeBroker{code: http.StatusAccepted}
+	fb.Server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		fb.bodies = append(fb.bodies, body)
+		w.WriteHeader(fb.code)
+	}))
+	fb.Server.TLS = &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{leafDER}, PrivateKey: leafKey}},
+		MinVersion:   tls.VersionTLS12,
+	}
+	fb.Server.StartTLS()
+	t.Cleanup(fb.Close)
+
+	return fb, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}))
+}
+
+// The broker's certificate is signed by a CA this process is given and the system does not
+// know. A client on the default trust store rejects it, and the failure looks exactly like an
+// agent nobody prompted: nothing arrives and nothing errors where anyone is looking.
+func TestTheBrokerCAIsTrusted(t *testing.T) {
+	fb, ca := newTLSBroker(t)
+
+	trusting := observerWithCA(t, fb, ca)
+	trusting.post(context.Background(), observation{eventID: "e1", state: contract.StateWaiting})
+	if len(fb.bodies) != 1 {
+		t.Fatalf("the broker saw %d requests with its CA trusted, want 1", len(fb.bodies))
+	}
+
+	distrusting := observerFor(t, fb)
+	distrusting.post(context.Background(), observation{eventID: "e2", state: contract.StateWaiting})
+	if len(fb.bodies) != 1 {
+		t.Errorf("the broker saw %d requests with the default trust store, want still 1: an untrusted certificate was accepted", len(fb.bodies))
+	}
 }
