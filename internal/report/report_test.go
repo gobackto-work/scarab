@@ -113,7 +113,7 @@ func TestPostSendsWhatTheControlPlaneExpects(t *testing.T) {
 
 	// The body must not name the workspace or the owner: the token carries the first and
 	// the record carries the second, so a caller-supplied field would be spoofable.
-	for _, forbidden := range []string{"workspace_id", "owner_id"} {
+	for _, forbidden := range []string{"workspaceId", "owner_id"} {
 		if _, ok := got.body[forbidden]; ok {
 			t.Errorf("the body carries %q", forbidden)
 		}
@@ -124,10 +124,10 @@ func TestPostSendsWhatTheControlPlaneExpects(t *testing.T) {
 	if got.body["mode"] != contract.ModeInteractive {
 		t.Errorf("mode = %v, want %q", got.body["mode"], contract.ModeInteractive)
 	}
-	if got.body["event_id"] != sampleReport().EventID {
-		t.Errorf("event_id = %v, want %q", got.body["event_id"], sampleReport().EventID)
+	if got.body["eventId"] != sampleReport().EventID {
+		t.Errorf("event_id = %v, want %q", got.body["eventId"], sampleReport().EventID)
 	}
-	if at, _ := got.body["occurred_at"].(string); !strings.HasPrefix(at, "2026-10-04T09:30:00") {
+	if at, _ := got.body["occurredAt"].(string); !strings.HasPrefix(at, "2026-10-04T09:30:00") {
 		t.Errorf("occurred_at = %q, want the observation time", at)
 	}
 }

@@ -126,12 +126,12 @@ func (c *Client) Post(ctx context.Context, r Report) (Result, error) {
 	}
 
 	body, err := json.Marshal(map[string]any{
-		"event_id":    r.EventID,
-		"run_id":      r.RunID,
-		"state":       r.State,
-		"mode":        r.Mode,
-		"occurred_at": r.At.UTC().Format(time.RFC3339Nano),
-		"attributes":  r.Attributes,
+		"eventId":    r.EventID,
+		"runId":      r.RunID,
+		"state":      r.State,
+		"mode":       r.Mode,
+		"occurredAt": r.At.UTC().Format(time.RFC3339Nano),
+		"attributes": r.Attributes,
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %v", ErrRejected, err)

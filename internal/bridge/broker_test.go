@@ -124,12 +124,12 @@ func TestPostSendsWhatTheBrokerExpects(t *testing.T) {
 		t.Fatalf("the broker saw %d requests, want 1", len(fb.bodies))
 	}
 	got := fb.bodies[0]
-	if got["event_id"] != "e1" || got["state"] != contract.StateWaiting {
+	if got["eventId"] != "e1" || got["state"] != contract.StateWaiting {
 		t.Errorf("body = %+v", got)
 	}
 	// No run id, because the broker attaches it from the pod. A body that named one would
 	// be a field the bridge could get wrong.
-	if _, ok := got["run_id"]; ok {
+	if _, ok := got["runId"]; ok {
 		t.Error("the body names a run")
 	}
 }
@@ -147,8 +147,8 @@ func TestARetryCarriesTheSameEventID(t *testing.T) {
 		t.Fatalf("the broker saw %d requests, want 3", len(fb.bodies))
 	}
 	for i, body := range fb.bodies {
-		if body["event_id"] != "e1" {
-			t.Errorf("attempt %d carried event id %q, want e1", i+1, body["event_id"])
+		if body["eventId"] != "e1" {
+			t.Errorf("attempt %d carried event id %q, want e1", i+1, body["eventId"])
 		}
 	}
 }

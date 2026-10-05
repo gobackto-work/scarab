@@ -166,7 +166,7 @@ func (o *BrokerObserver) post(ctx context.Context, obs observation) {
 }
 
 func (o *BrokerObserver) attempt(ctx context.Context, obs observation) error {
-	body, err := json.Marshal(map[string]string{"event_id": obs.eventID, "state": obs.state})
+	body, err := json.Marshal(map[string]string{"eventId": obs.eventID, "state": obs.state})
 	if err != nil {
 		return err
 	}
