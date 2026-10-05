@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/gobackto-work/scarab/internal/contract"
@@ -48,6 +49,13 @@ func (nopRecorder) Observed(context.Context, string, string, string) {}
 type Reporter struct {
 	client *report.Client
 	logger *slog.Logger
+
+	// rootRun is the root pod this reporter last saw. A root run's identity is its pod's
+	// UID, so a replaced pod is a different run, and the one before it can never be ended by
+	// anybody else. Guarded because the server reports workers while the poll reports the
+	// root.
+	mu      sync.Mutex
+	rootRun string
 }
 
 // NewReporter returns a Reporter.
@@ -94,18 +102,33 @@ func (r *Reporter) Observe(ctx context.Context, agents []Agent) {
 	}
 }
 
-// ObserveRoot reports the root run's terminal state, and only that.
+// ObserveRoot reports the root run's terminal state, and closes the run that a replaced
+// bridge left behind.
 //
 // A pod's phase says a running pod's run is somewhere non-terminal, and nothing in the pod
 // distinguishes a run that is working from one that is waiting for a person. Reporting
 // `running` from here would therefore fabricate a `resumed` every time the bridge had
-// recorded a `waiting`, so the broker derives the end of the run and leaves the rest to the
+// recorded a `waiting`, so the broker derives the END of the run and leaves the rest to the
 // bridge.
 //
-// A root run that never started has no state to end, and the record refuses a terminal
-// transition from nowhere. That is not a gap: a root pod that dies before the bridge
-// reports is a WORKSPACE failure, and pestilence already owns the workspace's state.
+// A root run's identity is its pod's UID. So when the pod is replaced -- an upgrade, a crash,
+// a moved image -- the run it was serving is a different run from the one now running, and
+// the bridge that knew it is gone. Nothing can report that run's end but this, the only
+// component that can see a pod go. Without it the run stays `waiting` for ever, which is a
+// permanent lie in the log and a false alarm the moment anything notifies on it.
+//
+// It needs no durable state: the run id is the bridge's pod, and a broker restart does not
+// change it, so only a replaced pod looks new.
 func (r *Reporter) ObserveRoot(ctx context.Context, root Agent) {
+	r.mu.Lock()
+	previous := r.rootRun
+	r.rootRun = root.ID
+	r.mu.Unlock()
+
+	if previous != "" && previous != root.ID {
+		r.send(ctx, previous+":"+contract.StateFailed, previous, contract.StateFailed, contract.ModeInteractive)
+	}
+
 	switch root.State {
 	case StateSucceeded, StateFailed:
 		r.send(ctx, root.ID+":"+root.State, root.ID, root.State, contract.ModeInteractive)
