@@ -48,7 +48,13 @@ func runObserver(logger *slog.Logger) *bridge.BrokerObserver {
 		logger.Warn("run state reporting is off: SCARAB_BROKER_URL or SCARAB_TOKEN_PATH is unset")
 		return nil
 	}
-	observer, err := bridge.NewBrokerObserver(brokerURL, tokenPath, logger)
+	// The broker's certificate is signed by its own CA, which is mounted beside the token.
+	// Unset means the broker is on plaintext.
+	caPath := os.Getenv(contract.EnvBrokerCA)
+	if caPath == "" {
+		caPath = contract.BrokerCAFile
+	}
+	observer, err := bridge.NewBrokerObserver(brokerURL, tokenPath, caPath, logger)
 	if err != nil {
 		logger.Error("run state reporting is off", "err", err)
 		return nil
