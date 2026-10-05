@@ -310,7 +310,7 @@ func TestObserveRunAttachesTheRunFromThePod(t *testing.T) {
 	h := NewServer(sp, v, rec, nil).Handler()
 
 	w := do(t, h, http.MethodPost, "/run", signEdDSA(t, priv, validClaims(now)),
-		`{"event_id":"e1","state":"waiting"}`)
+		`{"eventId":"e1","state":"waiting"}`)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status %d, want 202. body: %s", w.Code, w.Body.String())
 	}
@@ -326,7 +326,7 @@ func TestObserveRunRefusesARunInTheBody(t *testing.T) {
 	h, token := testServer(t, sp)
 
 	w := do(t, h, http.MethodPost, "/run", token,
-		`{"event_id":"e1","state":"waiting","run_id":"someone-elses-run"}`)
+		`{"eventId":"e1","state":"waiting","runId":"someone-elses-run"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status %d, want 400. body: %s", w.Code, w.Body.String())
 	}
@@ -337,7 +337,7 @@ func TestObserveRunNeedsAnEventIDAndAState(t *testing.T) {
 	h, token := testServer(t, sp)
 
 	for name, body := range map[string]string{
-		"no state": `{"event_id":"e1"}`,
+		"no state": `{"eventId":"e1"}`,
 		"no event": `{"state":"waiting"}`,
 		"neither":  `{}`,
 	} {
@@ -355,7 +355,7 @@ func TestObserveRunWithoutARootPodIsRefused(t *testing.T) {
 	sp := &stubSpawner{agents: map[string]Agent{}}
 	h, token := testServer(t, sp)
 
-	if w := do(t, h, http.MethodPost, "/run", token, `{"event_id":"e1","state":"waiting"}`); w.Code != http.StatusNotFound {
+	if w := do(t, h, http.MethodPost, "/run", token, `{"eventId":"e1","state":"waiting"}`); w.Code != http.StatusNotFound {
 		t.Errorf("status %d, want 404", w.Code)
 	}
 }
