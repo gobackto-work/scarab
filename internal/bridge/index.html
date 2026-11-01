@@ -63,7 +63,7 @@
 </form>
 
 <script type="module">
-import { catalog, isRealModel, providerOptions, renderHistory, renderRecord } from "/app.mjs";
+import { appendMode, catalog, isRealModel, providerOptions, renderHistory, renderRecord } from "/app.mjs";
 
 const log = document.getElementById('log');
 const status = document.getElementById('status');
@@ -95,11 +95,22 @@ function setBusy(next) {
   stop.disabled = !busy;
 }
 
+// The kind of delta span currently accepting text, or null after a block.
+let openRun = null;
+
 const write = (text, cls) => {
+  const mode = appendMode(openRun, cls);
+  if (mode === 'append') {
+    log.lastElementChild.textContent += text;
+    log.scrollTop = log.scrollHeight;
+    return;
+  }
+  if (mode === 'break') log.appendChild(document.createTextNode('\n'));
   const span = document.createElement('span');
   if (cls) span.className = cls;
   span.textContent = text;
   log.appendChild(span);
+  openRun = cls === '' || cls === 'think' ? cls : null;
   log.scrollTop = log.scrollHeight;
 };
 
@@ -149,6 +160,7 @@ function handleResponse(record) {
     // conversation, and re-rendering must be idempotent because every client gets
     // the response.
     log.replaceChildren();
+    openRun = null;
     for (const item of renderHistory(data.messages)) write(item.text, item.cls);
     return;
   }

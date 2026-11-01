@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  appendMode,
   isRealModel,
   catalog,
   describeError,
@@ -256,4 +257,20 @@ test("the unknown placeholder is not a real model", () => {
   assert.equal(isRealModel({ provider: "", id: "" }), false);
   assert.equal(isRealModel(undefined), false);
   assert.equal(isRealModel({ provider: "openrouter", id: "thinkingmachines/inkling:free" }), true);
+});
+
+// Reasoning and output are both delta streams, and `.think` is inline, so without a
+// decision here the answer starts in the middle of the thought.
+test("a run of one kind extends, a change of kind breaks the line", () => {
+  assert.equal(appendMode(null, ""), "plain");
+  assert.equal(appendMode("", ""), "append");
+  assert.equal(appendMode("think", "think"), "append");
+  assert.equal(appendMode("think", ""), "break");
+  assert.equal(appendMode("", "think"), "break");
+});
+
+test("anything that is not a delta stands alone", () => {
+  assert.equal(appendMode("", "tool"), "plain");
+  assert.equal(appendMode("think", "user"), "plain");
+  assert.equal(appendMode(null, "err"), "plain");
 });

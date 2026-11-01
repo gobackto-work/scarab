@@ -300,3 +300,25 @@ export function isRealModel(model) {
   const real = (value) => typeof value === "string" && value !== "" && value !== "unknown";
   return Boolean(model) && real(model.provider) && real(model.id);
 }
+
+/**
+ * How the next piece of text joins the transcript.
+ *
+ * Reasoning and output both arrive one token at a time, as `message_update` deltas
+ * with a class of `"think"` or `""`. Writing each delta as its own span put them on
+ * one line: `.think` is inline, so the answer began in the middle of the thought.
+ *
+ * A run of one kind extends the open span; a change of kind starts a new line.
+ * Everything else (a user message, a tool call, an error) is a block of its own and
+ * carries its own newlines.
+ *
+ * `open` is the kind of the span currently accepting deltas, or null when the last
+ * thing written was not a delta.
+ */
+export function appendMode(open, cls) {
+  const delta = cls === "" || cls === "think";
+  if (!delta) return "plain";
+  if (open === cls) return "append";
+  if (open !== null) return "break";
+  return "plain";
+}
