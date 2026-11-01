@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  appendMode,
+  deltaTarget,
   isRealModel,
   catalog,
   describeError,
@@ -259,18 +259,14 @@ test("the unknown placeholder is not a real model", () => {
   assert.equal(isRealModel({ provider: "openrouter", id: "thinkingmachines/inkling:free" }), true);
 });
 
-// Reasoning and output are both delta streams, and `.think` is inline, so without a
-// decision here the answer starts in the middle of the thought.
-test("a run of one kind extends, a change of kind breaks the line", () => {
-  assert.equal(appendMode(null, ""), "plain");
-  assert.equal(appendMode("", ""), "append");
-  assert.equal(appendMode("think", "think"), "append");
-  assert.equal(appendMode("think", ""), "break");
-  assert.equal(appendMode("", "think"), "break");
+test("a delta knows which part of the message it belongs to", () => {
+  assert.equal(deltaTarget({ assistantMessageEvent: { type: "thinking_delta", delta: "hm" } }), "thinking");
+  assert.equal(deltaTarget({ assistantMessageEvent: { type: "text_delta", delta: "Sure" } }), "text");
 });
 
-test("anything that is not a delta stands alone", () => {
-  assert.equal(appendMode("", "tool"), "plain");
-  assert.equal(appendMode("think", "user"), "plain");
-  assert.equal(appendMode(null, "err"), "plain");
+test("a record with no usable delta names no target", () => {
+  assert.equal(deltaTarget({ assistantMessageEvent: { type: "thinking_delta", delta: "" } }), null);
+  assert.equal(deltaTarget({ assistantMessageEvent: { type: "text_end" } }), null);
+  assert.equal(deltaTarget({}), null);
+  assert.equal(deltaTarget(null), null);
 });

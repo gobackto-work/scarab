@@ -302,23 +302,21 @@ export function isRealModel(model) {
 }
 
 /**
- * How the next piece of text joins the transcript.
+ * Which part of an assistant message a delta belongs to.
  *
- * Reasoning and output both arrive one token at a time, as `message_update` deltas
- * with a class of `"think"` or `""`. Writing each delta as its own span put them on
- * one line: `.think` is inline, so the answer began in the middle of the thought.
+ * Pi streams reasoning and output as separate deltas, and within one message it can
+ * emit them interleaved. Writing each delta where it arrived put the answer inside
+ * the thought, and a reload "fixed" it because the replay groups by content block.
  *
- * A run of one kind extends the open span; a change of kind starts a new line.
- * Everything else (a user message, a tool call, an error) is a block of its own and
- * carries its own newlines.
+ * The block order is the authority: reasoning, then text. A message therefore gets
+ * one span for each, and a delta appends to its own span whatever the arrival order.
  *
- * `open` is the kind of the span currently accepting deltas, or null when the last
- * thing written was not a delta.
+ * Returns "thinking" or "text", or null for a record that carries no delta.
  */
-export function appendMode(open, cls) {
-  const delta = cls === "" || cls === "think";
-  if (!delta) return "plain";
-  if (open === cls) return "append";
-  if (open !== null) return "break";
-  return "plain";
+export function deltaTarget(record) {
+  const event = record?.assistantMessageEvent;
+  if (!event) return null;
+  if (event.type === "thinking_delta" && event.delta) return "thinking";
+  if (event.type === "text_delta") return "text";
+  return null;
 }
