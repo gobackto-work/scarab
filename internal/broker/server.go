@@ -20,20 +20,27 @@ import (
 type Server struct {
 	spawner  Spawner
 	verifier *Verifier
+	// recorder records a worker's run state. Never nil: NewServer substitutes a discarding
+	// one, so no handler needs a nil check and reporting stays a side effect.
+	recorder Recorder
 	// maxTaskBytes bounds the decoded task so a hostile agent cannot make the
 	// broker hold an unbounded string.
 	maxTaskBytes int64
 	logger       *slog.Logger
 }
 
-// NewServer returns a Server. A nil logger discards.
-func NewServer(spawner Spawner, verifier *Verifier, logger *slog.Logger) *Server {
+// NewServer returns a Server. A nil logger discards, and a nil recorder discards reports.
+func NewServer(spawner Spawner, verifier *Verifier, recorder Recorder, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	if recorder == nil {
+		recorder = nopRecorder{}
 	}
 	return &Server{
 		spawner:      spawner,
 		verifier:     verifier,
+		recorder:     recorder,
 		maxTaskBytes: agentpod.MaxTaskBytes,
 		logger:       logger,
 	}
@@ -48,6 +55,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /agents/{id}", s.handleGet)
 	mux.HandleFunc("GET /agents/{id}/logs", s.handleLogs)
 	mux.HandleFunc("DELETE /agents/{id}", s.handleStop)
+	// The root run's state, from the bridge. One route and no run id in it: the broker
+	// attaches the identity from the pod, so the bridge cannot report against a run it does
+	// not own.
+	mux.HandleFunc("POST /run", s.handleObserveRun)
 	return s.authenticate(mux)
 }
 
@@ -165,6 +176,9 @@ func (s *Server) handleSpawn(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "spawn", err)
 		return
 	}
+	// After the worker exists, never before. A report about a run that failed to start would
+	// be a run the record believes in and nothing is running.
+	s.recorder.Started(r.Context(), id)
 	writeJSON(w, http.StatusCreated, spawnResponse{AgentID: id})
 }
 
@@ -205,11 +219,53 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
-	if err := s.spawner.Stop(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if err := s.spawner.Stop(r.Context(), id); err != nil {
 		s.fail(w, "stop", err)
 		return
 	}
+	// Before the response, because stopping removes the job and nothing can report on it
+	// afterwards.
+	s.recorder.Stopped(r.Context(), id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// observeRunRequest is a state the bridge observed for the root run.
+//
+// It names no run. The broker takes the run identity from the root pod and attaches it, so
+// there is nothing here to spoof -- the same rule the control plane holds, applied one hop
+// earlier.
+type observeRunRequest struct {
+	EventID string `json:"eventId"`
+	State   string `json:"state"`
+}
+
+// handleObserveRun relays a state the bridge saw for the root run.
+//
+// The bridge holds the session, so it is the only party that can tell a finished turn from
+// one that is waiting for a person. It has no Kubernetes access, so it cannot name its own
+// run, and the broker supplies that here.
+func (s *Server) handleObserveRun(w http.ResponseWriter, r *http.Request) {
+	var body observeRunRequest
+	if err := decodeJSON(w, r, s.maxTaskBytes, &body); err != nil {
+		writeJSONError(w, err)
+		return
+	}
+	if body.EventID == "" || body.State == "" {
+		writeJSONError(w, &Error{
+			Status:  http.StatusBadRequest,
+			Code:    CodeInvalidRequest,
+			Message: "event_id and state are required",
+		})
+		return
+	}
+	root, err := s.spawner.Root(r.Context())
+	if err != nil {
+		s.fail(w, "root", err)
+		return
+	}
+	s.recorder.Observed(r.Context(), root.ID, body.EventID, body.State)
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // ---------------------------------------------------------------------------
