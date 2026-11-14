@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  deltaTarget,
   isRealModel,
   catalog,
   describeError,
@@ -256,4 +257,16 @@ test("the unknown placeholder is not a real model", () => {
   assert.equal(isRealModel({ provider: "", id: "" }), false);
   assert.equal(isRealModel(undefined), false);
   assert.equal(isRealModel({ provider: "openrouter", id: "thinkingmachines/inkling:free" }), true);
+});
+
+test("a delta knows which part of the message it belongs to", () => {
+  assert.equal(deltaTarget({ assistantMessageEvent: { type: "thinking_delta", delta: "hm" } }), "thinking");
+  assert.equal(deltaTarget({ assistantMessageEvent: { type: "text_delta", delta: "Sure" } }), "text");
+});
+
+test("a record with no usable delta names no target", () => {
+  assert.equal(deltaTarget({ assistantMessageEvent: { type: "thinking_delta", delta: "" } }), null);
+  assert.equal(deltaTarget({ assistantMessageEvent: { type: "text_end" } }), null);
+  assert.equal(deltaTarget({}), null);
+  assert.equal(deltaTarget(null), null);
 });

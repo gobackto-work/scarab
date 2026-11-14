@@ -300,3 +300,23 @@ export function isRealModel(model) {
   const real = (value) => typeof value === "string" && value !== "" && value !== "unknown";
   return Boolean(model) && real(model.provider) && real(model.id);
 }
+
+/**
+ * Which part of an assistant message a delta belongs to.
+ *
+ * Pi streams reasoning and output as separate deltas, and within one message it can
+ * emit them interleaved. Writing each delta where it arrived put the answer inside
+ * the thought, and a reload "fixed" it because the replay groups by content block.
+ *
+ * The block order is the authority: reasoning, then text. A message therefore gets
+ * one span for each, and a delta appends to its own span whatever the arrival order.
+ *
+ * Returns "thinking" or "text", or null for a record that carries no delta.
+ */
+export function deltaTarget(record) {
+  const event = record?.assistantMessageEvent;
+  if (!event) return null;
+  if (event.type === "thinking_delta" && event.delta) return "thinking";
+  if (event.type === "text_delta") return "text";
+  return null;
+}

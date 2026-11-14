@@ -32,7 +32,8 @@
   #stop:not(:disabled) { background: #a33; }
   .tool { color: #7aa2f7; }
   .toolresult { color: #6a9955; }
-  .think { color: #777; font-style: italic; }
+  .msg { display: block; }
+  .think { color: #777; font-style: italic; display: block; }
   .user { color: #9ece6a; }
   .err  { color: #f7768e; }
   .meta { color: #666; }
@@ -63,7 +64,7 @@
 </form>
 
 <script type="module">
-import { catalog, isRealModel, providerOptions, renderHistory, renderRecord } from "/app.mjs";
+import { catalog, deltaTarget, isRealModel, providerOptions, renderHistory, renderRecord } from "/app.mjs";
 
 const log = document.getElementById('log');
 const status = document.getElementById('status');
@@ -95,6 +96,10 @@ function setBusy(next) {
   stop.disabled = !busy;
 }
 
+// The assistant message currently streaming, if one is. Its reasoning and its output
+// each have a span, so the two can arrive in any order without interleaving.
+let openMessage = null;
+
 const write = (text, cls) => {
   const span = document.createElement('span');
   if (cls) span.className = cls;
@@ -102,6 +107,21 @@ const write = (text, cls) => {
   log.appendChild(span);
   log.scrollTop = log.scrollHeight;
 };
+
+// One reasoning span, then one output span. A message with no reasoning leaves the
+// first empty, which costs nothing: an empty block has no height.
+function startMessage() {
+  const wrap = document.createElement('span');
+  wrap.className = 'msg';
+  const think = document.createElement('span');
+  think.className = 'think';
+  const text = document.createElement('span');
+  text.className = 'text';
+  wrap.append(think, text);
+  log.appendChild(wrap);
+  openMessage = { think, text };
+  return openMessage;
+}
 
 const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
 let ws;
@@ -137,6 +157,19 @@ function render(record) {
     return;
   }
 
+  if (record.type === 'message_start' && record.message?.role === 'assistant') {
+    startMessage();
+    return;
+  }
+  if (record.type === 'message_end') openMessage = null;
+
+  const target = deltaTarget(record);
+  if (target !== null) {
+    (openMessage ?? startMessage())[target].textContent += record.assistantMessageEvent.delta ?? '';
+    log.scrollTop = log.scrollHeight;
+    return;
+  }
+
   const out = renderRecord(record);
   if (out) write(out.text, out.cls);
 }
@@ -149,6 +182,7 @@ function handleResponse(record) {
     // conversation, and re-rendering must be idempotent because every client gets
     // the response.
     log.replaceChildren();
+    openMessage = null;
     for (const item of renderHistory(data.messages)) write(item.text, item.cls);
     return;
   }
