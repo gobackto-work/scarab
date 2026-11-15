@@ -192,6 +192,35 @@ func TestAConflictIsNotRetryable(t *testing.T) {
 	}
 }
 
+func TestRedirectsAreNotFollowed(t *testing.T) {
+	requests := make(chan struct{}, 1)
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests <- struct{}{}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer destination.Close()
+	for _, status := range []int{301, 302, 303, 307, 308} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, destination.URL, status)
+			}))
+			defer origin.Close()
+			client, err := New(origin.URL, tokenFile(t, "a-token"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.Post(context.Background(), sampleReport()); !errors.Is(err, ErrRejected) {
+				t.Fatalf("Post = %v, want ErrRejected", err)
+			}
+			select {
+			case <-requests:
+				t.Fatal("the client followed the redirect")
+			default:
+			}
+		})
+	}
+}
+
 func TestARejectionIsFinal(t *testing.T) {
 	for _, code := range []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound} {
 		cp := newControlPlane(t)
@@ -257,9 +286,14 @@ func TestAMissingTokenFileIsReported(t *testing.T) {
 func TestNewRefusesConfigurationItCannotUse(t *testing.T) {
 	token := tokenFile(t, "a-token")
 	cases := map[string]struct{ url, token string }{
-		"a relative url": {"platform:8080", token},
-		"no scheme":      {"//platform", token},
-		"no token path":  {"http://platform", ""},
+		"a relative url":     {"platform:8080", token},
+		"no scheme":          {"//platform", token},
+		"unsupported scheme": {"ftp://platform", token},
+		"userinfo":           {"http://user:pass@platform", token},
+		"query":              {"http://platform?target=other", token},
+		"empty query":        {"http://platform?", token},
+		"fragment":           {"http://platform#other", token},
+		"no token path":      {"http://platform", ""},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
