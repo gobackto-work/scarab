@@ -105,14 +105,19 @@ func New(baseURL, tokenPath string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("platform url: %w", err)
 	}
-	if parsed.Scheme == "" || parsed.Host == "" {
-		return nil, fmt.Errorf("platform url %q is not absolute", baseURL)
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return nil, errors.New("platform url must be an HTTP(S) URL without credentials, query or fragment")
 	}
 	if tokenPath == "" {
 		return nil, errors.New("the report token path is required")
 	}
 	return &Client{
-		http:      &http.Client{Timeout: 10 * time.Second},
+		http: &http.Client{
+			Timeout: 10 * time.Second,
+			// A redirect can send the report and its credential to another service.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 		url:       strings.TrimSuffix(baseURL, "/") + contract.ReportPath,
 		tokenPath: tokenPath,
 	}, nil
@@ -137,6 +142,8 @@ func (c *Client) Post(ctx context.Context, r Report) (Result, error) {
 		return Result{}, fmt.Errorf("%w: %v", ErrRejected, err)
 	}
 
+	// The platform supplies this URL at startup, not the agent making a request.
+	//nolint:gosec // G704: the configured control plane is the intended destination.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %v", ErrRejected, err)
@@ -144,6 +151,7 @@ func (c *Client) Post(ctx context.Context, r Report) (Result, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 
+	//nolint:gosec // G704: redirects are disabled; the destination is platform configuration.
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// A transport failure says nothing about whether the report arrived, which is
